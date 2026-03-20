@@ -691,14 +691,23 @@ func (h *Handler) OfflineCultivation(c *fiber.Ctx) error {
 		return c.Status(500).JSON(fiber.Map{"error": "db error"})
 	}
 
-	return c.JSON(fiber.Map{
+	// Check-in: maybe assign faction task (30% chance)
+	var factionTask interface{}
+	factionTask = h.CheckAndAssignFactionTasks(ctx, playerID)
+
+	resp := fiber.Map{
 		"offlineDuration": req.Duration,
 		"yearsCalculated": yearsOffline,
 		"xpPerYear":       xpPerYear,
 		"totalXpEarned":   totalXP,
 		"message": fmt.Sprintf("离线修炼%d秒（约%d游戏年），获得%d修为",
 			req.Duration, yearsOffline, totalXP),
-	})
+	}
+	if factionTask != nil {
+		resp["factionTask"] = factionTask
+		resp["factionTaskMessage"] = "门派有新任务下达！"
+	}
+	return c.JSON(resp)
 }
 
 // POST /api/breakthrough

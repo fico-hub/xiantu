@@ -252,6 +252,48 @@ CREATE TABLE IF NOT EXISTS location_events (
 CREATE INDEX IF NOT EXISTS idx_location_events_player ON location_events(player_id);
 CREATE INDEX IF NOT EXISTS idx_location_events_type ON location_events(encounter_type);
 CREATE INDEX IF NOT EXISTS idx_location_events_created ON location_events(created_at DESC);
+
+-- ========== 门派系统 ==========
+
+-- 玩家门派归属
+CREATE TABLE IF NOT EXISTS player_factions (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    player_id       UUID NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+    faction_id      VARCHAR(50) NOT NULL,
+    joined_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    contribution    BIGINT NOT NULL DEFAULT 0,
+    rank            VARCHAR(20) NOT NULL DEFAULT 'recruit', -- recruit/core/elder
+    UNIQUE(player_id)
+);
+
+-- 门派任务记录
+CREATE TABLE IF NOT EXISTS player_faction_tasks (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    player_id       UUID NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+    faction_id      VARCHAR(50) NOT NULL,
+    task_type       VARCHAR(30) NOT NULL, -- patrol/collect/eliminate/tribute/escort
+    title           VARCHAR(200) NOT NULL,
+    description     TEXT NOT NULL,
+    task_data       JSONB NOT NULL DEFAULT '{}',
+    reward_data     JSONB NOT NULL DEFAULT '{}',
+    status          VARCHAR(20) NOT NULL DEFAULT 'active', -- active/completed/cancelled/expired
+    assigned_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    completed_at    TIMESTAMPTZ,
+    expires_at      TIMESTAMPTZ
+);
+
+-- 门派特殊任务旗帜（如血祭任务完成标记）
+CREATE TABLE IF NOT EXISTS player_quest_flags (
+    player_id       UUID NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+    flag            VARCHAR(100) NOT NULL,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY(player_id, flag)
+);
+
+CREATE INDEX IF NOT EXISTS idx_player_factions_faction ON player_factions(faction_id);
+CREATE INDEX IF NOT EXISTS idx_faction_tasks_player ON player_faction_tasks(player_id);
+CREATE INDEX IF NOT EXISTS idx_faction_tasks_status ON player_faction_tasks(status);
+CREATE INDEX IF NOT EXISTS idx_faction_tasks_expires ON player_faction_tasks(expires_at);
 `
 
 func Migrate(ctx context.Context, pool *pgxpool.Pool) error {

@@ -88,6 +88,15 @@ func NewApp(pool *pgxpool.Pool, rdb *redis.Client, engine *game.Engine, jwtSecre
 	api.Get("/events/recent", h.EventsRecent)
 	api.Get("/events/my", h.AuthMiddleware, h.EventsMy)
 
+	// ── 门派系统 ──
+	api.Get("/factions", h.FactionList)
+	api.Get("/factions/my/tasks", h.AuthMiddleware, h.FactionMyTasks)
+	api.Get("/factions/my/rank", h.AuthMiddleware, h.FactionMyRank)
+	api.Get("/factions/:id", h.FactionDetail)
+	api.Post("/factions/:id/join", h.AuthMiddleware, h.FactionJoin)
+	api.Post("/factions/:id/leave", h.AuthMiddleware, h.FactionLeave)
+	api.Post("/factions/tasks/:id/complete", h.AuthMiddleware, h.FactionTaskComplete)
+
 	// ── Alchemy ──
 	api.Post("/alchemy/start", h.AuthMiddleware, h.StartAlchemy)
 	api.Get("/alchemy/collect", h.AuthMiddleware, h.CollectAlchemy)

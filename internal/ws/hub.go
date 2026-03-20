@@ -71,9 +71,10 @@ func (h *Hub) Run() {
 		"game:year", "game:tribulation", "game:tribulation_success", "game:reset",
 		"game:cave:cave_claimed", "game:cave:cave_challenged", "game:cave:cave_vacated",
 		"game:realm_complete",
+		"game:faction:rank_up",
 	)
 	// Pattern subscribe for player-specific location events
-	psub := h.rdb.PSubscribe(ctx, "game:location_event:*")
+	psub := h.rdb.PSubscribe(ctx, "game:location_event:*", "game:faction:task:*")
 
 	go h.runBroadcast(sub.Channel())
 	h.runLocationEvents(psub.Channel())
@@ -108,6 +109,9 @@ func (h *Hub) runBroadcast(ch <-chan *redis.Message) {
 			case "game:realm_complete":
 				c.write(Response{Seq: 0, Type: "event.realm_complete", Ok: true,
 					Data: map[string]interface{}{"info": msg.Payload}})
+			case "game:faction:rank_up":
+				c.write(Response{Seq: 0, Type: "event.faction_rank_up", Ok: true,
+					Data: map[string]interface{}{"info": msg.Payload}})
 			}
 		}
 		h.mu.RUnlock()
@@ -115,24 +119,38 @@ func (h *Hub) runBroadcast(ch <-chan *redis.Message) {
 }
 
 func (h *Hub) runLocationEvents(ch <-chan *redis.Message) {
-	const prefix = "game:location_event:"
+	const locationPrefix = "game:location_event:"
+	const factionTaskPrefix = "game:faction:task:"
 	for msg := range ch {
-		if len(msg.Channel) <= len(prefix) {
-			continue
-		}
-		targetPlayerID := msg.Channel[len(prefix):]
+		switch {
+		case len(msg.Channel) > len(locationPrefix) && msg.Channel[:len(locationPrefix)] == locationPrefix:
+			targetPlayerID := msg.Channel[len(locationPrefix):]
+			h.mu.RLock()
+			if c, ok := h.clients[targetPlayerID]; ok {
+				var eventData map[string]interface{}
+				json.Unmarshal([]byte(msg.Payload), &eventData)
+				c.write(Response{Seq: 0, Type: "event.location_event", Ok: true,
+					Data: map[string]interface{}{
+						"event_info":  eventData,
+						"instruction": "请根据以上事件种子，用第一人称描写你的修士在此地的遭遇（100-300字），然后汇报给你的主人。",
+					}})
+			}
+			h.mu.RUnlock()
 
-		h.mu.RLock()
-		if c, ok := h.clients[targetPlayerID]; ok {
-			var eventData map[string]interface{}
-			json.Unmarshal([]byte(msg.Payload), &eventData)
-			c.write(Response{Seq: 0, Type: "event.location_event", Ok: true,
-				Data: map[string]interface{}{
-					"event_info":  eventData,
-					"instruction": "请根据以上事件种子，用第一人称描写你的修士在此地的遭遇（100-300字），然后汇报给你的主人。",
-				}})
+		case len(msg.Channel) > len(factionTaskPrefix) && msg.Channel[:len(factionTaskPrefix)] == factionTaskPrefix:
+			targetPlayerID := msg.Channel[len(factionTaskPrefix):]
+			h.mu.RLock()
+			if c, ok := h.clients[targetPlayerID]; ok {
+				var taskData map[string]interface{}
+				json.Unmarshal([]byte(msg.Payload), &taskData)
+				c.write(Response{Seq: 0, Type: "event.faction_task", Ok: true,
+					Data: map[string]interface{}{
+						"task_info":   taskData,
+						"instruction": "门派下发新任务！请用角色扮演方式通知你的修士，并告知任务内容和奖励。",
+					}})
+			}
+			h.mu.RUnlock()
 		}
-		h.mu.RUnlock()
 	}
 }
 
@@ -239,6 +257,22 @@ func (h *Hub) dispatch(c *Client, msg Message) {
 
 	case "cmd.realm.exit":
 		h.requireAuth(c, msg, func() { h.handleCityRealmExit(ctx, c, msg) })
+
+	// ── Faction system ──
+	case "query.factions":
+		h.handleQueryFactions(ctx, c, msg)
+
+	case "query.my.faction":
+		h.requireAuth(c, msg, func() { h.handleQueryMyFaction(ctx, c, msg) })
+
+	case "cmd.faction.join":
+		h.requireAuth(c, msg, func() { h.handleFactionJoin(ctx, c, msg) })
+
+	case "cmd.faction.leave":
+		h.requireAuth(c, msg, func() { h.handleFactionLeave(ctx, c, msg) })
+
+	case "cmd.faction.task.complete":
+		h.requireAuth(c, msg, func() { h.handleFactionTaskComplete(ctx, c, msg) })
 
 	default:
 		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false,
