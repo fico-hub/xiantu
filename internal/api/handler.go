@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"os"
 	"strings"
 	"time"
 
@@ -42,6 +43,26 @@ func (h *Handler) AuthMiddleware(c *fiber.Ctx) error {
 
 	c.Locals("playerID", claims.PlayerID)
 	c.Locals("agentID", claims.AgentID)
+	return c.Next()
+}
+
+// AdminMiddleware checks for admin token via Authorization header or query param
+// Token is read from ADMIN_TOKEN env var (falls back to a default dev token)
+func (h *Handler) AdminMiddleware(c *fiber.Ctx) error {
+	adminToken := os.Getenv("ADMIN_TOKEN")
+	if adminToken == "" {
+		adminToken = "xiantu-admin-dev-token"
+	}
+
+	tokenStr := c.Get("Authorization")
+	tokenStr = strings.TrimPrefix(tokenStr, "Bearer ")
+	if tokenStr == "" {
+		tokenStr = c.Query("adminToken")
+	}
+
+	if tokenStr != adminToken {
+		return c.Status(403).JSON(fiber.Map{"error": "admin access required"})
+	}
 	return c.Next()
 }
 

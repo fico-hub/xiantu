@@ -180,6 +180,43 @@ CREATE INDEX IF NOT EXISTS idx_cave_occupations_player ON cave_occupations(playe
 CREATE INDEX IF NOT EXISTS idx_city_realm_player ON city_realm_explorations(player_id);
 `
 
+// wishesAndWorldEventsSchema adds the wishes and world_events tables
+const wishesAndWorldEventsSchema = `
+-- ========== 许愿系统 ==========
+CREATE TABLE IF NOT EXISTS wishes (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    player_id   UUID NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+    username    VARCHAR(50) NOT NULL,
+    category    VARCHAR(30) NOT NULL CHECK (category IN ('world_event','bug_report','feature_request')),
+    content     VARCHAR(500) NOT NULL,
+    status      VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected','fulfilled')),
+    admin_note  TEXT NOT NULL DEFAULT '',
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_wishes_player ON wishes(player_id);
+CREATE INDEX IF NOT EXISTS idx_wishes_status ON wishes(status);
+CREATE INDEX IF NOT EXISTS idx_wishes_category ON wishes(category);
+CREATE INDEX IF NOT EXISTS idx_wishes_created ON wishes(created_at DESC);
+
+-- ========== 全服事件系统 ==========
+CREATE TABLE IF NOT EXISTS world_events (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    event_type      VARCHAR(50) NOT NULL,
+    title           VARCHAR(200) NOT NULL,
+    description     TEXT NOT NULL,
+    effect_type     VARCHAR(20) NOT NULL DEFAULT 'neutral' CHECK (effect_type IN ('buff','debuff','neutral')),
+    effect_data     JSONB NOT NULL DEFAULT '{}',
+    triggered_by    VARCHAR(50) NOT NULL DEFAULT 'system',
+    active_until_year INT NOT NULL DEFAULT 0,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_world_events_active_until ON world_events(active_until_year);
+CREATE INDEX IF NOT EXISTS idx_world_events_created ON world_events(created_at DESC);
+`
+
 // migrationSQL handles upgrading existing databases
 const migrationSQL = `
 -- Add race column if not exists
@@ -304,6 +341,10 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 	_, err = pool.Exec(ctx, migrationSQL)
 	if err != nil {
 		return fmt.Errorf("migrate columns: %w", err)
+	}
+	_, err = pool.Exec(ctx, wishesAndWorldEventsSchema)
+	if err != nil {
+		return fmt.Errorf("migrate wishes/world_events: %w", err)
 	}
 	return nil
 }

@@ -88,6 +88,20 @@ func NewApp(pool *pgxpool.Pool, rdb *redis.Client, engine *game.Engine, jwtSecre
 	api.Get("/events/recent", h.EventsRecent)
 	api.Get("/events/my", h.AuthMiddleware, h.EventsMy)
 
+	// ── 许愿系统 ──
+	api.Post("/wishes", h.AuthMiddleware, h.WishCreate)
+	api.Get("/wishes/top5", h.AdminMiddleware, h.WishTop5)
+	api.Get("/wishes/my", h.AuthMiddleware, h.WishMy)
+	api.Get("/wishes/fulfilled", h.WishFulfilled)
+	api.Post("/wishes/:id/approve", h.AdminMiddleware, h.WishApprove)
+	api.Post("/wishes/:id/reject", h.AdminMiddleware, h.WishReject)
+	api.Post("/wishes/:id/fulfill", h.AdminMiddleware, h.WishFulfill)
+
+	// ── 全服事件系统 ──
+	api.Get("/world/events/active", h.WorldEventsActive)
+	api.Post("/world/events", h.AdminMiddleware, h.WorldEventCreate)
+	api.Get("/world/events/history", h.WorldEventsHistory)
+
 	// ── 门派系统 ──
 	api.Get("/factions", h.FactionList)
 	api.Get("/factions/my/tasks", h.AuthMiddleware, h.FactionMyTasks)

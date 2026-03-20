@@ -72,6 +72,8 @@ func (h *Hub) Run() {
 		"game:cave:cave_claimed", "game:cave:cave_challenged", "game:cave:cave_vacated",
 		"game:realm_complete",
 		"game:faction:rank_up",
+		"game:wish:fulfilled",
+		"game:world_event",
 	)
 	// Pattern subscribe for player-specific location events
 	psub := h.rdb.PSubscribe(ctx, "game:location_event:*", "game:faction:task:*")
@@ -112,6 +114,16 @@ func (h *Hub) runBroadcast(ch <-chan *redis.Message) {
 			case "game:faction:rank_up":
 				c.write(Response{Seq: 0, Type: "event.faction_rank_up", Ok: true,
 					Data: map[string]interface{}{"info": msg.Payload}})
+			case "game:wish:fulfilled":
+				var wishData map[string]interface{}
+				json.Unmarshal([]byte(msg.Payload), &wishData)
+				c.write(Response{Seq: 0, Type: "event.wish_fulfilled", Ok: true,
+					Data: wishData})
+			case "game:world_event":
+				var eventData map[string]interface{}
+				json.Unmarshal([]byte(msg.Payload), &eventData)
+				c.write(Response{Seq: 0, Type: "event.world_event", Ok: true,
+					Data: eventData})
 			}
 		}
 		h.mu.RUnlock()
@@ -273,6 +285,23 @@ func (h *Hub) dispatch(c *Client, msg Message) {
 
 	case "cmd.faction.task.complete":
 		h.requireAuth(c, msg, func() { h.handleFactionTaskComplete(ctx, c, msg) })
+
+	// ── 许愿系统 ──
+	case "cmd.wish":
+		h.requireAuth(c, msg, func() { h.handleWishCreate(ctx, c, msg) })
+
+	case "query.wishes.top5":
+		h.handleWishTop5(ctx, c, msg)
+
+	case "query.wishes.my":
+		h.requireAuth(c, msg, func() { h.handleWishMy(ctx, c, msg) })
+
+	case "query.wishes.fulfilled":
+		h.handleWishFulfilled(ctx, c, msg)
+
+	// ── 全服事件查询 ──
+	case "query.world.events.active":
+		h.handleWorldEventsActive(ctx, c, msg)
 
 	default:
 		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false,
