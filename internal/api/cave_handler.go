@@ -136,10 +136,10 @@ func (h *Handler) CaveClaim(c *fiber.Ctx) error {
 
 	if err == nil {
 		if existingPlayerID == playerID {
-			return c.Status(400).JSON(fiber.Map{"error": "你已经占领了此洞府"})
+			return c.Status(400).JSON(fiber.Map{"error": "此洞府已在你名下，无需重复占领"})
 		}
 		return c.Status(409).JSON(fiber.Map{
-			"error":  "此洞府已被他人占领，请使用挑战接口",
+			"error":  "此洞府已有修士盘踞，需挑战驱逐方可入主——请使用 challenge 接口",
 			"caveId": caveID,
 		})
 	}

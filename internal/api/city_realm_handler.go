@@ -92,7 +92,7 @@ func (h *Handler) CityRealmEnter(c *fiber.Ctx) error {
 		playerID,
 	).Scan(&activeCount)
 	if activeCount > 0 {
-		return c.Status(400).JSON(fiber.Map{"error": "已有进行中的城市秘境探索，请先结算"})
+		return c.Status(400).JSON(fiber.Map{"error": "已有进行中的城市秘境探索，请先结算前次收益，方可再度踏入"})
 	}
 
 	// Check soul sense
@@ -101,7 +101,7 @@ func (h *Handler) CityRealmEnter(c *fiber.Ctx) error {
 
 	if soulSense < cr.SoulCost {
 		return c.Status(400).JSON(fiber.Map{
-			"error": fmt.Sprintf("神识值不足，需要%d，当前%d", cr.SoulCost, soulSense),
+			"error": fmt.Sprintf("神识不足，此地灵气复杂，探索需消耗%d神识，当前仅余%d——请休养一段时间后再来", cr.SoulCost, soulSense),
 		})
 	}
 

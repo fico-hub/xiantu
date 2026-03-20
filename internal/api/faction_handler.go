@@ -414,7 +414,7 @@ func (h *Handler) completeFactionTask(ctx context.Context, c *fiber.Ctx, playerI
 		tx.QueryRow(ctx, `SELECT spirit_stone FROM players WHERE id=$1`, playerID).Scan(&currentStone)
 		if currentStone < -netStone {
 			tx.Rollback(ctx)
-			return c.Status(400).JSON(fiber.Map{"error": fmt.Sprintf("灵石不足，需要%d灵石", -netStone)})
+			return c.Status(400).JSON(fiber.Map{"error": fmt.Sprintf("灵石不足，完成此任务需贡献%d灵石，施主还需积累", -netStone)})
 		}
 		tx.Exec(ctx, `UPDATE players SET spirit_stone = spirit_stone + $1 WHERE id=$2`, netStone, playerID)
 	}

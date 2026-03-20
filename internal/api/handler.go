@@ -475,7 +475,7 @@ func (h *Handler) Contribute(c *fiber.Ctx) error {
 		// Check realm requirement
 		if !game.RealmAtLeast(realm, realmLevel, reqCultRealm, reqCultLevel) {
 			return c.Status(400).JSON(fiber.Map{
-				"error": fmt.Sprintf("境界不足，天劫要求%s以上", game.RealmDisplayName(reqCultRealm, reqCultLevel)),
+				"error": fmt.Sprintf("修为尚浅，此地凶险——天劫要求%s以上方可出战，且待境界精进后再来", game.RealmDisplayName(reqCultRealm, reqCultLevel)),
 			})
 		}
 		// Add contribution
@@ -509,7 +509,7 @@ func (h *Handler) Contribute(c *fiber.Ctx) error {
 		}
 		if spiritStone < req.Amount {
 			return c.Status(400).JSON(fiber.Map{
-				"error": fmt.Sprintf("灵石不足，需要%d，当前%d", req.Amount, spiritStone),
+				"error": fmt.Sprintf("灵石不足，施主还需积累——欲贡献%d，当前仅有%d灵石", req.Amount, spiritStone),
 			})
 		}
 		// Deduct and contribute
@@ -549,7 +549,7 @@ func (h *Handler) Contribute(c *fiber.Ctx) error {
 		).Scan(&matQty)
 		if matQty < req.Amount {
 			return c.Status(400).JSON(fiber.Map{
-				"error": fmt.Sprintf("%s系天材地宝不足，需要%d，当前%d",
+				"error": fmt.Sprintf("%s系天材地宝储备不足，欲贡献%d，当前仅有%d——多探秘境以积累天材",
 					game.ElementChinese(req.Element), req.Amount, matQty),
 			})
 		}
@@ -750,13 +750,13 @@ func (h *Handler) Breakthrough(c *fiber.Ctx) error {
 	needed := game.GetXPNeeded(realm, realmLevel)
 	if xp < needed {
 		return c.Status(400).JSON(fiber.Map{
-			"error": fmt.Sprintf("修为不足，需要%d，当前%d，还差%d", needed, xp, needed-xp),
+			"error": fmt.Sprintf("修为尚浅，欲破境者需积累%d修为，当前仅有%d，还差%d。继续修炼，莫急于一时。", needed, xp, needed-xp),
 		})
 	}
 
 	newRealm, newLevel, isMajor := game.NextRealmLevel(realm, realmLevel)
 	if newRealm == "" {
-		return c.Status(400).JSON(fiber.Map{"error": "已达最高境界"})
+		return c.Status(400).JSON(fiber.Map{"error": "已达渡劫大圆满，此界无更高境界，唯有飞升超脱"})
 	}
 
 	raceInfo := game.Races[race]
@@ -771,7 +771,7 @@ func (h *Handler) Breakthrough(c *fiber.Ctx) error {
 			).Scan(&qty)
 			if err != nil || qty < 1 {
 				return c.Status(400).JSON(fiber.Map{
-					"error": fmt.Sprintf("缺少突破道具【%s】，请通过炼丹获取", nextTier.BreakthroughItemName),
+					"error": fmt.Sprintf("大境界突破需要【%s】为引，施主尚未炼制此丹，请先前往炼丹", nextTier.BreakthroughItemName),
 				})
 			}
 			_, _ = h.db.Exec(ctx,
@@ -825,9 +825,9 @@ func (h *Handler) Breakthrough(c *fiber.Ctx) error {
 	}
 
 	displayName := game.RealmDisplayName(newRealm, newLevel)
-	message := fmt.Sprintf("突破成功！进阶至【%s】！剩余修为：%d", displayName, newXP)
+	message := game.BreakthroughMessage(newRealm, newLevel, newXP, false)
 	if isMajor {
-		message = fmt.Sprintf("大突破成功！踏入【%s】！天地灵气涌动！剩余修为：%d", displayName, newXP)
+		message = game.BreakthroughMessage(newRealm, newLevel, newXP, true)
 	}
 
 	return c.JSON(fiber.Map{
@@ -890,7 +890,7 @@ func (h *Handler) EquipTechnique(c *fiber.Ctx) error {
 
 	if !game.RealmAtLeast(realm, realmLevel, tech.MinRealm, tech.MinLevel) {
 		return c.Status(400).JSON(fiber.Map{
-			"error": fmt.Sprintf("境界不足，需要%s", game.RealmDisplayName(tech.MinRealm, tech.MinLevel)),
+			"error": fmt.Sprintf("此功法奥义深远，修为尚浅难以领悟——需达到%s方可修习", game.RealmDisplayName(tech.MinRealm, tech.MinLevel)),
 		})
 	}
 
@@ -903,7 +903,7 @@ func (h *Handler) EquipTechnique(c *fiber.Ctx) error {
 	if !learned {
 		if tech.FragCost > 0 && fragments < int64(tech.FragCost) {
 			return c.Status(400).JSON(fiber.Map{
-				"error": fmt.Sprintf("功法残页不足，需要%d，当前%d", tech.FragCost, fragments),
+				"error": fmt.Sprintf("功法残页不足，悟透此功需%d页残页，当前仅有%d——多探秘境以收集残页", tech.FragCost, fragments),
 			})
 		}
 		if tech.FragCost > 0 {
@@ -996,13 +996,13 @@ func (h *Handler) ExploreSecretRealm(c *fiber.Ctx) error {
 	if !game.RealmAtLeast(realm, realmLevel, sr.MinRealm, 1) {
 		minTier := game.RealmTiers[sr.MinRealm]
 		return c.Status(400).JSON(fiber.Map{
-			"error": fmt.Sprintf("境界不足，需要%s以上", minTier.Name),
+			"error": fmt.Sprintf("修为尚浅，此地凶险，且待境界精进后再来——需%s以上方可踏入", minTier.Name),
 		})
 	}
 
 	if soulSense < sr.SoulCost {
 		return c.Status(400).JSON(fiber.Map{
-			"error": fmt.Sprintf("神识值不足，需要%d，当前%d", sr.SoulCost, soulSense),
+			"error": fmt.Sprintf("神识不足，探索此地需消耗%d神识，当前仅余%d——请等待神识自然恢复", sr.SoulCost, soulSense),
 		})
 	}
 
@@ -1129,7 +1129,7 @@ func (h *Handler) StartAlchemy(c *fiber.Ctx) error {
 	if !game.RealmAtLeast(realm, realmLevel, recipe.MinRealm, 1) {
 		minTier := game.RealmTiers[recipe.MinRealm]
 		return c.Status(400).JSON(fiber.Map{
-			"error": fmt.Sprintf("境界不足，需要%s以上", minTier.Name),
+			"error": fmt.Sprintf("丹道浅薄，此炉火候掌控需%s以上修为，施主修为尚浅，且待境界精进后再行炼制", minTier.Name),
 		})
 	}
 
@@ -1138,7 +1138,7 @@ func (h *Handler) StartAlchemy(c *fiber.Ctx) error {
 	for _, cost := range recipe.MaterialCosts {
 		if materials[cost.Element] < cost.Quantity {
 			return c.Status(400).JSON(fiber.Map{
-				"error": fmt.Sprintf("%s系天材地宝不足，需要%d，当前%d",
+				"error": fmt.Sprintf("炼丹材料匮乏，%s系天材地宝需%d份，当前仅有%d——多探秘境以积累天材",
 					game.ElementChinese(cost.Element), cost.Quantity, materials[cost.Element]),
 			})
 		}
