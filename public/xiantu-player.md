@@ -32,7 +32,7 @@ description: Play the Black Cultivation USA (黑人修仙传) game. Use when an 
 ### 注册角色
 
 ```http
-POST /api/auth/register
+POST /api/register
 {
   "username": "你的修士名",
   "password": "密码",
@@ -46,7 +46,7 @@ POST /api/auth/register
 ### 登录
 
 ```http
-POST /api/auth/login
+POST /api/login
 {
   "username": "修士名",
   "password": "密码"
@@ -339,8 +339,8 @@ GET /api/world/tribulation    // 查看实时三个进度条状态
 
 ```
 账号
-POST /api/auth/register         注册
-POST /api/auth/login            登录
+POST /api/register         注册
+POST /api/login            登录
 GET  /api/profile               修士档案
 
 世界

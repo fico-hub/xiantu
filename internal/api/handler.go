@@ -119,8 +119,8 @@ func (h *Handler) Register(c *fiber.Ctx) error {
 	ctx := context.Background()
 	var playerID string
 	err = h.db.QueryRow(ctx,
-		`INSERT INTO players (username, password_hash, agent_id, spirit_root, spirit_root_multiplier, race)
-		 VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+		`INSERT INTO players (username, password_hash, agent_id, spirit_root, spirit_root_multiplier, race, last_offline_claim)
+		 VALUES ($1, $2, $3, $4, $5, $6, '0001-01-01T00:00:00Z') RETURNING id`,
 		req.Username, string(hash), agentID, rootName, multiplier, req.Race,
 	).Scan(&playerID)
 	if err != nil {
@@ -141,6 +141,22 @@ func (h *Handler) Register(c *fiber.Ctx) error {
 	// Get world status for new player greeting
 	worldStatus, _ := h.engine.GetWorldStatus(ctx)
 
+	// Build onboarding info
+	var worldYear int
+	var nextTribYear int
+	var nextTribElement string
+	if worldStatus != nil {
+		if v, ok := worldStatus["currentYear"].(int); ok {
+			worldYear = v
+		}
+		if v, ok := worldStatus["nextTribulationYear"].(int); ok {
+			nextTribYear = v
+		}
+		if v, ok := worldStatus["nextTribulationElement"].(string); ok {
+			nextTribElement = v
+		}
+	}
+
 	return c.Status(201).JSON(fiber.Map{
 		"playerId":             playerID,
 		"agentId":              agentID,
@@ -154,6 +170,20 @@ func (h *Handler) Register(c *fiber.Ctx) error {
 		"raceSpecialName":      raceInfo.SpecialName,
 		"raceSpecialDesc":      raceInfo.SpecialDesc,
 		"worldStatus":          worldStatus,
+		"world_year":               worldYear,
+		"next_tribulation_year":    nextTribYear,
+		"next_tribulation_element": game.ElementChinese(nextTribElement),
+		"character": fiber.Map{
+			"realm":        "练气期一层",
+			"xp":           0,
+			"spirit_stone": 0,
+			"cave":         nil,
+		},
+		"tips": []string{
+			"立即调用 POST /api/cultivate/offline 领取首次离线修为，无需等待CD",
+			"调用 GET /api/world/status 查看天劫倒计时，提前准备贡献材料",
+			"探索秘境（POST /api/city-realms/:id/enter）获取灵石和天材地宝，为突破做准备",
+		},
 		"message": fmt.Sprintf("恭喜！你的灵根为【%s】（修炼速度×%.1f），族裔为【%s】，欢迎踏入《黑人修仙传》！",
 			rootDisplayName, multiplier, raceInfo.Name),
 	})
@@ -188,11 +218,57 @@ func (h *Handler) Login(c *fiber.Ctx) error {
 		return c.Status(500).JSON(fiber.Map{"error": "token error"})
 	}
 
+	// Fetch onboarding data: world status + character basics
+	worldStatus, _ := h.engine.GetWorldStatus(ctx)
+
+	var worldYear int
+	var nextTribYear int
+	var nextTribElement string
+	if worldStatus != nil {
+		if v, ok := worldStatus["currentYear"].(int); ok {
+			worldYear = v
+		}
+		if v, ok := worldStatus["nextTribulationYear"].(int); ok {
+			nextTribYear = v
+		}
+		if v, ok := worldStatus["nextTribulationElement"].(string); ok {
+			nextTribElement = v
+		}
+	}
+
+	// Fetch player character basics
+	var realm string
+	var realmLevel int
+	var xp, spiritStone int64
+	var caveID *string
+	h.db.QueryRow(ctx,
+		`SELECT realm, realm_level, cultivation_xp, spirit_stone,
+		 (SELECT cave_id FROM cave_occupations WHERE player_id=$1 LIMIT 1)
+		 FROM players WHERE id=$1`,
+		playerID,
+	).Scan(&realm, &realmLevel, &xp, &spiritStone, &caveID)
+
+	realmDisplay := game.RealmDisplayName(realm, realmLevel)
+
 	return c.JSON(fiber.Map{
 		"token":     token,
 		"expiresAt": expiresAt,
 		"playerId":  playerID,
 		"agentId":   agentID,
+		"world_year":               worldYear,
+		"next_tribulation_year":    nextTribYear,
+		"next_tribulation_element": game.ElementChinese(nextTribElement),
+		"character": fiber.Map{
+			"realm":        realmDisplay,
+			"xp":           xp,
+			"spirit_stone": spiritStone,
+			"cave":         caveID,
+		},
+		"tips": []string{
+			"先调用 POST /api/cultivate/offline 领取离线修为",
+			"调用 GET /api/world/status 查看天劫倒计时，天劫窗口开启时优先贡献",
+			"修为满了记得 POST /api/breakthrough 突破境界",
+		},
 	})
 }
 
@@ -691,8 +767,9 @@ func (h *Handler) OfflineCultivation(c *fiber.Ctx) error {
 		return c.Status(404).JSON(fiber.Map{"error": "player not found"})
 	}
 
-	// Must wait at least 5 minutes between claims
-	if time.Since(lastClaim) < 5*time.Minute {
+	// New player (never claimed before): skip cooldown
+	// Returning players: must wait at least 5 minutes between claims
+	if !lastClaim.IsZero() && time.Since(lastClaim) < 5*time.Minute {
 		return c.Status(429).JSON(fiber.Map{"error": "离线收益每5分钟只能领取一次（1游戏年）"})
 	}
 
