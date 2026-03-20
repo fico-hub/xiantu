@@ -1,0 +1,4 @@
+xiantu-server
+*.env
+.env
+*.log
