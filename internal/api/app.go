@@ -14,7 +14,7 @@ import (
 
 func NewApp(pool *pgxpool.Pool, rdb *redis.Client, engine *game.Engine, jwtSecret string) *fiber.App {
 	app := fiber.New(fiber.Config{
-		AppName: "仙途 Xiantu v0.1",
+		AppName: "仙途 Xiantu v0.3 · 黑人修仙传",
 	})
 
 	app.Use(recover.New())
@@ -29,17 +29,47 @@ func NewApp(pool *pgxpool.Pool, rdb *redis.Client, engine *game.Engine, jwtSecre
 
 	h := NewHandler(pool, rdb, engine, jwtSecret)
 
-	// HTTP API routes
 	api := app.Group("/api")
+
+	// ── Auth ──
 	api.Post("/register", h.Register)
 	api.Post("/login", h.Login)
 	api.Get("/profile", h.AuthMiddleware, h.Profile)
+
+	// ── Device login ──
 	api.Post("/device-login/start", h.DeviceLoginStart)
 	api.Post("/device-login/poll", h.DeviceLoginPoll)
 	api.Post("/device-login/approve", h.AuthMiddleware, h.DeviceLoginApprove)
 	api.Get("/device-login/pending", h.AuthMiddleware, h.DeviceLoginPending)
 
-	// WebSocket
+	// ── World (public) ──
+	api.Get("/world/status", h.WorldStatus)
+	api.Get("/world/tribulation", h.TribulationStatus)
+	api.Post("/world/contribute", h.AuthMiddleware, h.Contribute)
+	api.Get("/world/hall-of-fame", h.HallOfFame)
+
+	// ── Game data (public) ──
+	api.Get("/realms", h.Realms)
+	api.Get("/races", h.RaceList)
+
+	// ── Cultivation (authenticated) ──
+	api.Post("/cultivate/offline", h.AuthMiddleware, h.OfflineCultivation)
+	api.Post("/breakthrough", h.AuthMiddleware, h.Breakthrough)
+
+	// ── Techniques ──
+	api.Get("/techniques", h.TechniqueList)
+	api.Post("/technique/equip", h.AuthMiddleware, h.EquipTechnique)
+
+	// ── Secret realms ──
+	api.Get("/secret-realms", h.SecretRealmList)
+	api.Post("/secret-realm/explore", h.AuthMiddleware, h.ExploreSecretRealm)
+	api.Get("/secret-realm/collect", h.AuthMiddleware, h.CollectExploration)
+
+	// ── Alchemy ──
+	api.Post("/alchemy/start", h.AuthMiddleware, h.StartAlchemy)
+	api.Get("/alchemy/collect", h.AuthMiddleware, h.CollectAlchemy)
+
+	// ── WebSocket ──
 	hub := ws.NewHub(pool, rdb, engine, jwtSecret)
 	go hub.Run()
 

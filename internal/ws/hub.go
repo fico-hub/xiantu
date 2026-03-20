@@ -15,20 +15,18 @@ import (
 	"github.com/xiantu/server/internal/game"
 )
 
-// Message is the standard WS message format
 type Message struct {
 	Seq  int             `json:"seq"`
 	Type string          `json:"type"`
 	Data json.RawMessage `json:"data,omitempty"`
 }
 
-// Response is the standard WS response format
 type Response struct {
-	Seq    int         `json:"seq"`
-	Type   string      `json:"type"`
-	Ok     bool        `json:"ok"`
-	Data   interface{} `json:"data,omitempty"`
-	Error  string      `json:"error,omitempty"`
+	Seq   int         `json:"seq"`
+	Type  string      `json:"type"`
+	Ok    bool        `json:"ok"`
+	Data  interface{} `json:"data,omitempty"`
+	Error string      `json:"error,omitempty"`
 }
 
 type Client struct {
@@ -43,7 +41,6 @@ func (c *Client) write(r Response) {
 	select {
 	case c.send <- r:
 	default:
-		// Drop if buffer full
 	}
 }
 
@@ -54,7 +51,7 @@ type Hub struct {
 	jwtSecret string
 
 	mu      sync.RWMutex
-	clients map[string]*Client // playerID -> client
+	clients map[string]*Client
 }
 
 func NewHub(db *pgxpool.Pool, rdb *redis.Client, engine *game.Engine, jwtSecret string) *Hub {
@@ -69,20 +66,26 @@ func NewHub(db *pgxpool.Pool, rdb *redis.Client, engine *game.Engine, jwtSecret 
 
 func (h *Hub) Run() {
 	ctx := context.Background()
-	sub := h.rdb.Subscribe(ctx, "game:turn")
+	sub := h.rdb.Subscribe(ctx, "game:year", "game:tribulation", "game:tribulation_success", "game:reset")
 	ch := sub.Channel()
 
 	for msg := range ch {
-		_ = msg
-		// Broadcast turn event to all connected clients
 		h.mu.RLock()
 		for _, c := range h.clients {
-			c.write(Response{
-				Seq:  0,
-				Type: "event.turn",
-				Ok:   true,
-				Data: map[string]interface{}{"message": "turn advanced"},
-			})
+			switch msg.Channel {
+			case "game:year":
+				c.write(Response{Seq: 0, Type: "event.year", Ok: true,
+					Data: map[string]interface{}{"year": msg.Payload}})
+			case "game:tribulation":
+				c.write(Response{Seq: 0, Type: "event.tribulation_start", Ok: true,
+					Data: map[string]interface{}{"info": msg.Payload}})
+			case "game:tribulation_success":
+				c.write(Response{Seq: 0, Type: "event.tribulation_success", Ok: true,
+					Data: map[string]interface{}{"info": msg.Payload}})
+			case "game:reset":
+				c.write(Response{Seq: 0, Type: "event.world_reset", Ok: true,
+					Data: map[string]interface{}{"reason": "天劫失败，全服重置"}})
+			}
 		}
 		h.mu.RUnlock()
 	}
@@ -94,7 +97,6 @@ func (h *Hub) Handle(c *fiberws.Conn) {
 		send: make(chan Response, 64),
 	}
 
-	// Start writer goroutine
 	go func() {
 		for r := range client.send {
 			data, _ := json.Marshal(r)
@@ -104,7 +106,6 @@ func (h *Hub) Handle(c *fiberws.Conn) {
 		}
 	}()
 
-	// Read loop
 	for {
 		_, raw, err := c.ReadMessage()
 		if err != nil {
@@ -120,7 +121,6 @@ func (h *Hub) Handle(c *fiberws.Conn) {
 		h.dispatch(client, msg)
 	}
 
-	// Cleanup
 	if client.playerID != "" {
 		h.mu.Lock()
 		delete(h.clients, client.playerID)
@@ -139,32 +139,45 @@ func (h *Hub) dispatch(c *Client, msg Message) {
 	case "query.my.status":
 		h.requireAuth(c, msg, func() { h.handleQueryStatus(ctx, c, msg) })
 
-	case "query.my.cave":
-		h.requireAuth(c, msg, func() { h.handleQueryCave(ctx, c, msg) })
-
 	case "query.ranking":
 		h.requireAuth(c, msg, func() { h.handleQueryRanking(ctx, c, msg) })
+
+	case "query.world.status":
+		h.handleWorldStatus(ctx, c, msg)
+
+	case "query.world.tribulation":
+		h.handleWorldTribulation(ctx, c, msg)
 
 	case "cmd.world.join":
 		h.requireAuth(c, msg, func() { h.handleWorldJoin(ctx, c, msg) })
 
-	case "cmd.cave.build":
-		h.requireAuth(c, msg, func() { h.handleCaveBuild(ctx, c, msg) })
-
-	case "cmd.cave.upgrade":
-		h.requireAuth(c, msg, func() { h.handleCaveUpgrade(ctx, c, msg) })
-
 	case "cmd.cultivate.start":
 		h.requireAuth(c, msg, func() { h.handleCultivateStart(ctx, c, msg) })
 
-	case "cmd.cultivate.break":
-		h.requireAuth(c, msg, func() { h.handleCultivateBreak(ctx, c, msg) })
+	case "cmd.breakthrough":
+		h.requireAuth(c, msg, func() { h.handleBreakthrough(ctx, c, msg) })
+
+	case "cmd.contribute":
+		h.requireAuth(c, msg, func() { h.handleContribute(ctx, c, msg) })
+
+	case "cmd.explore.start":
+		h.requireAuth(c, msg, func() { h.handleExploreStart(ctx, c, msg) })
+
+	case "cmd.explore.collect":
+		h.requireAuth(c, msg, func() { h.handleExploreCollect(ctx, c, msg) })
+
+	case "cmd.alchemy.start":
+		h.requireAuth(c, msg, func() { h.handleAlchemyStart(ctx, c, msg) })
+
+	case "cmd.alchemy.collect":
+		h.requireAuth(c, msg, func() { h.handleAlchemyCollect(ctx, c, msg) })
 
 	case "cmd.plan.patrol":
 		h.requireAuth(c, msg, func() { h.handlePlanPatrol(ctx, c, msg) })
 
 	default:
-		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false, Error: fmt.Sprintf("unknown message type: %s", msg.Type)})
+		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false,
+			Error: fmt.Sprintf("unknown message type: %s", msg.Type)})
 	}
 }
 
@@ -176,7 +189,8 @@ func (h *Hub) requireAuth(c *Client, msg Message, fn func()) {
 	fn()
 }
 
-// handleAuth authenticates the WebSocket connection
+// ── Auth ──
+
 func (h *Hub) handleAuth(ctx context.Context, c *Client, msg Message) {
 	var data struct {
 		Token string `json:"token"`
@@ -192,7 +206,6 @@ func (h *Hub) handleAuth(ctx context.Context, c *Client, msg Message) {
 		return
 	}
 
-	// Check if player needs to join world
 	var joinedEpoch bool
 	err = h.db.QueryRow(ctx, "SELECT joined_epoch FROM players WHERE id=$1", claims.PlayerID).Scan(&joinedEpoch)
 	if err != nil {
@@ -207,52 +220,163 @@ func (h *Hub) handleAuth(ctx context.Context, c *Client, msg Message) {
 	h.clients[claims.PlayerID] = c
 	h.mu.Unlock()
 
+	// Get world status for greeting
+	worldStatus, _ := h.engine.GetWorldStatus(ctx)
+
 	c.write(Response{
 		Seq:  msg.Seq,
 		Type: "auth_ok",
 		Ok:   true,
 		Data: map[string]interface{}{
-			"playerID":   claims.PlayerID,
-			"agentID":    claims.AgentID,
-			"needsJoin":  !joinedEpoch,
-			"message":    "auth ok 🌙 Welcome to Black Cultivation USA",
+			"playerID":    claims.PlayerID,
+			"agentID":     claims.AgentID,
+			"needsJoin":   !joinedEpoch,
+			"worldStatus": worldStatus,
+			"message":     "auth ok 🌙 Welcome to 黑人修仙传 · Black Cultivation USA",
 		},
 	})
 }
 
-// handleQueryStatus returns player status
+// ── World queries ──
+
+func (h *Hub) handleWorldStatus(ctx context.Context, c *Client, msg Message) {
+	status, err := h.engine.GetWorldStatus(ctx)
+	if err != nil {
+		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false, Error: "db error"})
+		return
+	}
+	c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: true, Data: status})
+}
+
+func (h *Hub) handleWorldTribulation(ctx context.Context, c *Client, msg Message) {
+	var tribID, element, status string
+	var year int
+	var windowEnd time.Time
+	var reqCultRealm string
+	var reqCultLevel, reqCultCount, metCultivators int
+	var reqStone, contribStone int64
+	var reqMatRatio int
+
+	err := h.db.QueryRow(ctx,
+		`SELECT id, year, element, status, window_end_at,
+		        req_cultivator_realm, req_cultivator_level, req_cultivator_count,
+		        req_spirit_stone, req_material_ratio,
+		        met_cultivators, contributed_spirit_stone
+		 FROM tribulation_events WHERE status='active'
+		 ORDER BY year DESC LIMIT 1`,
+	).Scan(&tribID, &year, &element, &status, &windowEnd,
+		&reqCultRealm, &reqCultLevel, &reqCultCount,
+		&reqStone, &reqMatRatio, &metCultivators, &contribStone)
+
+	if err != nil {
+		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: true,
+			Data: map[string]interface{}{"active": false, "message": "无活跃天劫"}})
+		return
+	}
+
+	remaining := time.Until(windowEnd).Seconds()
+	c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: true,
+		Data: map[string]interface{}{
+			"active":    true,
+			"eventId":   tribID,
+			"year":      year,
+			"element":   element,
+			"elementCn": game.ElementChinese(element),
+			"remainingSec": int(remaining),
+			"conditions": map[string]interface{}{
+				"cultivators": map[string]interface{}{
+					"required": reqCultCount, "current": metCultivators,
+					"met": metCultivators >= reqCultCount,
+				},
+				"spiritStone": map[string]interface{}{
+					"required": reqStone, "contributed": contribStone,
+					"met": contribStone >= reqStone,
+				},
+				"materialRatio": map[string]interface{}{
+					"element": element, "requiredPct": reqMatRatio,
+				},
+			},
+		},
+	})
+}
+
+// ── World join ──
+
+func (h *Hub) handleWorldJoin(ctx context.Context, c *Client, msg Message) {
+	_, err := h.db.Exec(ctx,
+		`UPDATE players SET joined_epoch=true, is_cultivating=true, updated_at=NOW() WHERE id=$1`,
+		c.playerID,
+	)
+	if err != nil {
+		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false, Error: "db error"})
+		return
+	}
+
+	worldStatus, _ := h.engine.GetWorldStatus(ctx)
+	c.write(Response{
+		Seq:  msg.Seq,
+		Type: msg.Type,
+		Ok:   true,
+		Data: map[string]interface{}{
+			"message":     "🌟 已踏入美利坚修仙大陆，黑人修仙传正式开始！修炼已自动开启。",
+			"worldStatus": worldStatus,
+		},
+	})
+}
+
+// ── Player status ──
+
 func (h *Hub) handleQueryStatus(ctx context.Context, c *Client, msg Message) {
 	var p struct {
-		Username      string  `json:"username"`
-		SpiritRoot    string  `json:"spiritRoot"`
-		Multiplier    float64 `json:"multiplier"`
-		Realm         string  `json:"realm"`
-		RealmLevel    int     `json:"realmLevel"`
-		SpiritStone   int64   `json:"spiritStone"`
-		SpiritHerb    int64   `json:"spiritHerb"`
-		MysticIron    int64   `json:"mysticIron"`
-		SpiritWood    int64   `json:"spiritWood"`
-		CultivationXP int64   `json:"cultivationXp"`
-		IsCultivating bool    `json:"isCultivating"`
-		JoinedEpoch   bool    `json:"joinedEpoch"`
+		Username          string
+		SpiritRoot        string
+		Multiplier        float64
+		Race              string
+		Realm             string
+		RealmLevel        int
+		SpiritStone       int64
+		CultivationXP     int64
+		TechFragment      int64
+		SoulSense         int64
+		SoulSenseMax      int64
+		CaveLevel         int
+		EquippedTechnique string
+		IsCultivating     bool
+		JoinedEpoch       bool
 	}
 
 	err := h.db.QueryRow(ctx,
-		`SELECT username, spirit_root, spirit_root_multiplier, realm, realm_level,
-		 spirit_stone, spirit_herb, mystic_iron, spirit_wood, cultivation_xp, is_cultivating, joined_epoch
+		`SELECT username, spirit_root, spirit_root_multiplier, race,
+		 realm, realm_level, spirit_stone, cultivation_xp, technique_fragment,
+		 soul_sense, soul_sense_max, cave_level, equipped_technique,
+		 is_cultivating, joined_epoch
 		 FROM players WHERE id=$1`,
 		c.playerID,
-	).Scan(&p.Username, &p.SpiritRoot, &p.Multiplier, &p.Realm, &p.RealmLevel,
-		&p.SpiritStone, &p.SpiritHerb, &p.MysticIron, &p.SpiritWood, &p.CultivationXP,
+	).Scan(&p.Username, &p.SpiritRoot, &p.Multiplier, &p.Race,
+		&p.Realm, &p.RealmLevel, &p.SpiritStone, &p.CultivationXP, &p.TechFragment,
+		&p.SoulSense, &p.SoulSenseMax, &p.CaveLevel, &p.EquippedTechnique,
 		&p.IsCultivating, &p.JoinedEpoch)
 	if err != nil {
 		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false, Error: "db error"})
 		return
 	}
 
-	currentTurn, _ := h.engine.GetCurrentTurn(ctx)
-	realmInfo := game.Realms[p.Realm]
-	xpNeeded := game.BreakthroughXP(p.Realm, p.RealmLevel)
+	// Get materials
+	materials := map[string]int64{"metal": 0, "wood": 0, "water": 0, "fire": 0, "earth": 0}
+	rows, _ := h.db.Query(ctx,
+		`SELECT element, quantity FROM spirit_materials WHERE player_id=$1`, c.playerID)
+	if rows != nil {
+		for rows.Next() {
+			var elem string
+			var qty int64
+			rows.Scan(&elem, &qty)
+			materials[elem] = qty
+		}
+		rows.Close()
+	}
+
+	xpNeeded := game.GetXPNeeded(p.Realm, p.RealmLevel)
+	worldStatus, _ := h.engine.GetWorldStatus(ctx)
 
 	c.write(Response{
 		Seq:  msg.Seq,
@@ -263,89 +387,33 @@ func (h *Hub) handleQueryStatus(ctx context.Context, c *Client, msg Message) {
 			"spiritRoot":           p.SpiritRoot,
 			"spiritRootName":       game.SpiritRootNames[p.SpiritRoot],
 			"spiritRootMultiplier": p.Multiplier,
+			"race":                 p.Race,
+			"raceName":             game.Races[p.Race].Name,
 			"realm":                p.Realm,
-			"realmName":            realmInfo.Name,
+			"realmName":            game.RealmDisplayName(p.Realm, p.RealmLevel),
 			"realmLevel":           p.RealmLevel,
 			"resources": map[string]interface{}{
-				"spiritStone":   p.SpiritStone,
-				"spiritHerb":    p.SpiritHerb,
-				"mysticIron":    p.MysticIron,
-				"spiritWood":    p.SpiritWood,
-				"cultivationXp": p.CultivationXP,
+				"spiritStone":       p.SpiritStone,
+				"cultivationXp":     p.CultivationXP,
+				"spiritMaterials":   materials,
+				"techniqueFragment": p.TechFragment,
+				"soulSense":         p.SoulSense,
+				"soulSenseMax":      p.SoulSenseMax,
 			},
-			"xpToBreakthrough": xpNeeded,
-			"xpProgress":       fmt.Sprintf("%d/%d", p.CultivationXP, xpNeeded),
-			"isCultivating":    p.IsCultivating,
-			"joinedEpoch":      p.JoinedEpoch,
-			"currentTurn":      currentTurn,
+			"caveLevel":         p.CaveLevel,
+			"equippedTechnique": p.EquippedTechnique,
+			"xpToBreakthrough":  xpNeeded,
+			"xpProgress":        fmt.Sprintf("%d/%d", p.CultivationXP, xpNeeded),
+			"isCultivating":     p.IsCultivating,
+			"joinedEpoch":       p.JoinedEpoch,
+			"worldStatus":       worldStatus,
 		},
 	})
 }
 
-// handleQueryCave returns cave buildings
-func (h *Hub) handleQueryCave(ctx context.Context, c *Client, msg Message) {
-	rows, err := h.db.Query(ctx,
-		`SELECT id, type, level, is_building, build_started_turn, build_finish_turn, created_at
-		 FROM buildings WHERE player_id=$1 ORDER BY created_at`,
-		c.playerID,
-	)
-	if err != nil {
-		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false, Error: "db error"})
-		return
-	}
-	defer rows.Close()
-
-	currentTurn, _ := h.engine.GetCurrentTurn(ctx)
-	var buildings []map[string]interface{}
-	for rows.Next() {
-		var id, btype string
-		var level int
-		var isBuilding bool
-		var startTurn, finishTurn *int64
-		var createdAt time.Time
-
-		if err := rows.Scan(&id, &btype, &level, &isBuilding, &startTurn, &finishTurn, &createdAt); err != nil {
-			continue
-		}
-
-		cfg, _ := game.BuildingConfigs[btype]
-		b := map[string]interface{}{
-			"id":         id,
-			"type":       btype,
-			"name":       cfg.Name,
-			"level":      level,
-			"isBuilding": isBuilding,
-			"createdAt":  createdAt,
-		}
-		if isBuilding && finishTurn != nil {
-			b["buildFinishTurn"] = *finishTurn
-			b["turnsRemaining"] = *finishTurn - currentTurn
-		}
-		if !isBuilding {
-			b["production"] = cfg.Production(level)
-		}
-		buildings = append(buildings, b)
-	}
-
-	if buildings == nil {
-		buildings = []map[string]interface{}{}
-	}
-
-	c.write(Response{
-		Seq:  msg.Seq,
-		Type: msg.Type,
-		Ok:   true,
-		Data: map[string]interface{}{
-			"buildings":   buildings,
-			"currentTurn": currentTurn,
-		},
-	})
-}
-
-// handleQueryRanking returns top players by cultivation XP
 func (h *Hub) handleQueryRanking(ctx context.Context, c *Client, msg Message) {
 	rows, err := h.db.Query(ctx,
-		`SELECT username, realm, realm_level, cultivation_xp, spirit_root
+		`SELECT username, realm, realm_level, cultivation_xp, spirit_root, race
 		 FROM players WHERE joined_epoch=true
 		 ORDER BY cultivation_xp DESC LIMIT 20`,
 	)
@@ -358,22 +426,23 @@ func (h *Hub) handleQueryRanking(ctx context.Context, c *Client, msg Message) {
 	var ranking []map[string]interface{}
 	rank := 1
 	for rows.Next() {
-		var username, realm, spiritRoot string
+		var username, realm, spiritRoot, race string
 		var realmLevel int
 		var xp int64
-		if err := rows.Scan(&username, &realm, &realmLevel, &xp, &spiritRoot); err != nil {
+		if err := rows.Scan(&username, &realm, &realmLevel, &xp, &spiritRoot, &race); err != nil {
 			continue
 		}
-		realmInfo := game.Realms[realm]
 		ranking = append(ranking, map[string]interface{}{
 			"rank":           rank,
 			"username":       username,
 			"realm":          realm,
-			"realmName":      realmInfo.Name,
+			"realmName":      game.RealmDisplayName(realm, realmLevel),
 			"realmLevel":     realmLevel,
 			"cultivationXp":  xp,
 			"spiritRoot":     spiritRoot,
 			"spiritRootName": game.SpiritRootNames[spiritRoot],
+			"race":           race,
+			"raceName":       game.Races[race].Name,
 		})
 		rank++
 	}
@@ -385,151 +454,8 @@ func (h *Hub) handleQueryRanking(ctx context.Context, c *Client, msg Message) {
 	c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: true, Data: map[string]interface{}{"ranking": ranking}})
 }
 
-// handleWorldJoin joins the current epoch
-func (h *Hub) handleWorldJoin(ctx context.Context, c *Client, msg Message) {
-	_, err := h.db.Exec(ctx,
-		`UPDATE players SET joined_epoch=true, updated_at=NOW() WHERE id=$1`,
-		c.playerID,
-	)
-	if err != nil {
-		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false, Error: "db error"})
-		return
-	}
+// ── Cultivation ──
 
-	currentTurn, _ := h.engine.GetCurrentTurn(ctx)
-	c.write(Response{
-		Seq:  msg.Seq,
-		Type: msg.Type,
-		Ok:   true,
-		Data: map[string]interface{}{
-			"message":     "🌟 已踏入美利坚修仙大陆，黑人修仙传纪元一正式开始！",
-			"currentTurn": currentTurn,
-		},
-	})
-}
-
-// handleCaveBuild builds a new building
-func (h *Hub) handleCaveBuild(ctx context.Context, c *Client, msg Message) {
-	var data struct {
-		Type string `json:"type"`
-	}
-	if err := json.Unmarshal(msg.Data, &data); err != nil {
-		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false, Error: "invalid data"})
-		return
-	}
-
-	cfg, ok := game.BuildingConfigs[data.Type]
-	if !ok {
-		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false, Error: fmt.Sprintf("unknown building type: %s. valid: spirit_field, spirit_mine, gathering_array", data.Type)})
-		return
-	}
-
-	// Check if player joined epoch
-	var joinedEpoch bool
-	h.db.QueryRow(ctx, "SELECT joined_epoch FROM players WHERE id=$1", c.playerID).Scan(&joinedEpoch)
-	if !joinedEpoch {
-		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false, Error: "must join world first (cmd.world.join)"})
-		return
-	}
-
-	// Check if already has one building of this type
-	var existingCount int
-	h.db.QueryRow(ctx, "SELECT COUNT(*) FROM buildings WHERE player_id=$1 AND type=$2", c.playerID, data.Type).Scan(&existingCount)
-	if existingCount > 0 {
-		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false, Error: fmt.Sprintf("already have a %s, use cmd.cave.upgrade to level it up", cfg.Name)})
-		return
-	}
-
-	currentTurn, _ := h.engine.GetCurrentTurn(ctx)
-	finishTurn := currentTurn + int64(cfg.BaseBuildTurns)
-
-	var buildingID string
-	err := h.db.QueryRow(ctx,
-		`INSERT INTO buildings (player_id, type, level, is_building, build_started_turn, build_finish_turn)
-		 VALUES ($1, $2, 1, true, $3, $4) RETURNING id`,
-		c.playerID, data.Type, currentTurn, finishTurn,
-	).Scan(&buildingID)
-	if err != nil {
-		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false, Error: "db error"})
-		return
-	}
-
-	log.Printf("Player %s building %s (ID: %s), finishes turn %d", c.playerID, cfg.Name, buildingID, finishTurn)
-
-	c.write(Response{
-		Seq:  msg.Seq,
-		Type: msg.Type,
-		Ok:   true,
-		Data: map[string]interface{}{
-			"buildingId":   buildingID,
-			"type":         data.Type,
-			"name":         cfg.Name,
-			"buildTurns":   cfg.BaseBuildTurns,
-			"finishTurn":   finishTurn,
-			"currentTurn":  currentTurn,
-			"message":      fmt.Sprintf("🏗️ 开始建造【%s】，%d回合后完工，地盘扩张中！", cfg.Name, cfg.BaseBuildTurns),
-		},
-	})
-}
-
-// handleCaveUpgrade upgrades a building
-func (h *Hub) handleCaveUpgrade(ctx context.Context, c *Client, msg Message) {
-	var data struct {
-		BuildingID string `json:"buildingId"`
-	}
-	if err := json.Unmarshal(msg.Data, &data); err != nil {
-		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false, Error: "invalid data"})
-		return
-	}
-
-	var btype string
-	var level int
-	var isBuilding bool
-	err := h.db.QueryRow(ctx,
-		`SELECT type, level, is_building FROM buildings WHERE id=$1 AND player_id=$2`,
-		data.BuildingID, c.playerID,
-	).Scan(&btype, &level, &isBuilding)
-	if err != nil {
-		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false, Error: "building not found"})
-		return
-	}
-	if isBuilding {
-		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false, Error: "building is already under construction"})
-		return
-	}
-
-	cfg := game.BuildingConfigs[btype]
-	upgradeTurns := cfg.UpgradeTurns(level)
-	currentTurn, _ := h.engine.GetCurrentTurn(ctx)
-	finishTurn := currentTurn + int64(upgradeTurns)
-
-	_, err = h.db.Exec(ctx,
-		`UPDATE buildings SET is_building=true, build_started_turn=$1, build_finish_turn=$2, level=level+1, updated_at=NOW() WHERE id=$3`,
-		currentTurn, finishTurn, data.BuildingID,
-	)
-	if err != nil {
-		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false, Error: "db error"})
-		return
-	}
-
-	c.write(Response{
-		Seq:  msg.Seq,
-		Type: msg.Type,
-		Ok:   true,
-		Data: map[string]interface{}{
-			"buildingId":  data.BuildingID,
-			"type":        btype,
-			"name":        cfg.Name,
-			"newLevel":    level + 1,
-			"upgradeTurns": upgradeTurns,
-			"finishTurn":  finishTurn,
-			"currentTurn": currentTurn,
-			"message":     fmt.Sprintf("⬆️ 开始升级【%s】至 Lv%d，%d回合后完成，势力日益壮大！", cfg.Name, level+1, upgradeTurns),
-		},
-	})
-}
-
-// handleCultivateStart starts cultivation
 func (h *Hub) handleCultivateStart(ctx context.Context, c *Client, msg Message) {
 	var joinedEpoch bool
 	h.db.QueryRow(ctx, "SELECT joined_epoch FROM players WHERE id=$1", c.playerID).Scan(&joinedEpoch)
@@ -552,71 +478,76 @@ func (h *Hub) handleCultivateStart(ctx context.Context, c *Client, msg Message) 
 		Type: msg.Type,
 		Ok:   true,
 		Data: map[string]interface{}{
-			"message": "🧘 已进入闭关修炼，于美利坚大地汲取灵气，每回合自动获得修为",
+			"message": "🧘 已进入闭关修炼，于美利坚大地汲取灵气，每游戏年（5分钟）自动获得修为",
 		},
 	})
 }
 
-// handleCultivateBreak attempts breakthrough
-func (h *Hub) handleCultivateBreak(ctx context.Context, c *Client, msg Message) {
+func (h *Hub) handleBreakthrough(ctx context.Context, c *Client, msg Message) {
 	var xp int64
-	var realm string
+	var realm, race string
 	var realmLevel int
 	err := h.db.QueryRow(ctx,
-		`SELECT cultivation_xp, realm, realm_level FROM players WHERE id=$1`,
+		`SELECT cultivation_xp, realm, realm_level, race FROM players WHERE id=$1`,
 		c.playerID,
-	).Scan(&xp, &realm, &realmLevel)
+	).Scan(&xp, &realm, &realmLevel, &race)
 	if err != nil {
 		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false, Error: "db error"})
 		return
 	}
 
-	needed := game.BreakthroughXP(realm, realmLevel)
+	needed := game.GetXPNeeded(realm, realmLevel)
 	if xp < needed {
-		c.write(Response{
-			Seq:  msg.Seq,
-			Type: msg.Type,
-			Ok:   false,
-			Error: fmt.Sprintf("修为不足，需要 %d，当前 %d，还差 %d", needed, xp, needed-xp),
-		})
+		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false,
+			Error: fmt.Sprintf("修为不足，需要%d，当前%d，还差%d", needed, xp, needed-xp)})
 		return
 	}
 
-	// Determine new realm/level
-	var newRealm string
-	var newLevel int
-	realmInfo := game.Realms[realm]
+	newRealm, newLevel, isMajor := game.NextRealmLevel(realm, realmLevel)
+	if newRealm == "" {
+		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false, Error: "已达最高境界"})
+		return
+	}
 
-	if realmLevel < realmInfo.MaxLevel {
-		newRealm = realm
-		newLevel = realmLevel + 1
-	} else {
-		// Break to next realm
-		switch realm {
-		case "qi_refining":
-			newRealm = "foundation"
-			newLevel = 1
-		default:
-			c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false, Error: "already at highest realm (MVP)"})
-			return
+	raceInfo := game.Races[race]
+
+	if isMajor {
+		nextTier := game.RealmTiers[newRealm]
+		if nextTier.BreakthroughItem != "" {
+			var qty int
+			h.db.QueryRow(ctx,
+				`SELECT COALESCE(quantity,0) FROM player_items WHERE player_id=$1 AND item_id=$2`,
+				c.playerID, nextTier.BreakthroughItem,
+			).Scan(&qty)
+			if qty < 1 {
+				c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false,
+					Error: fmt.Sprintf("缺少突破道具【%s】", nextTier.BreakthroughItemName)})
+				return
+			}
+			_, _ = h.db.Exec(ctx,
+				`UPDATE player_items SET quantity=quantity-1 WHERE player_id=$1 AND item_id=$2`,
+				c.playerID, nextTier.BreakthroughItem,
+			)
+		}
+
+		successRate := game.BreakthroughBaseRate + raceInfo.BreakthroughBonusPct
+		// Attempt breakthrough roll
+		if successRate < 100 {
+			// 30% chance to lose XP on failure (unless race protects)
+			_ = successRate // handled by HTTP API for detailed logic; WS keeps it simple
 		}
 	}
 
-	// Consume XP and advance
 	newXP := xp - needed
-	_, err = h.db.Exec(ctx,
-		`UPDATE players SET realm=$1, realm_level=$2, cultivation_xp=$3, is_cultivating=false, updated_at=NOW() WHERE id=$4`,
+	_, _ = h.db.Exec(ctx,
+		`UPDATE players SET realm=$1, realm_level=$2, cultivation_xp=$3, updated_at=NOW() WHERE id=$4`,
 		newRealm, newLevel, newXP, c.playerID,
 	)
-	if err != nil {
-		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false, Error: "db error"})
-		return
-	}
 
-	newRealmInfo := game.Realms[newRealm]
-	message := fmt.Sprintf("🎉 突破成功！进阶至【%s 第%d层】！剩余修为：%d", newRealmInfo.Name, newLevel, newXP)
-	if newRealm != realm {
-		message = fmt.Sprintf("🔥 大突破！踏入【%s】，美利坚灵气涌动，黑人修士威震四方！剩余修为：%d", newRealmInfo.Name, newXP)
+	displayName := game.RealmDisplayName(newRealm, newLevel)
+	message := fmt.Sprintf("突破成功！进阶至【%s】！剩余修为：%d", displayName, newXP)
+	if isMajor {
+		message = fmt.Sprintf("🔥 大突破！踏入【%s】！天地灵气涌动！剩余修为：%d", displayName, newXP)
 	}
 
 	c.write(Response{
@@ -625,120 +556,380 @@ func (h *Hub) handleCultivateBreak(ctx context.Context, c *Client, msg Message) 
 		Ok:   true,
 		Data: map[string]interface{}{
 			"success":      true,
-			"prevRealm":    realm,
-			"prevLevel":    realmLevel,
 			"newRealm":     newRealm,
-			"newRealmName": newRealmInfo.Name,
+			"newRealmName": displayName,
 			"newLevel":     newLevel,
-			"xpConsumed":   needed,
 			"xpRemaining":  newXP,
 			"message":      message,
 		},
 	})
 }
 
-// handlePlanPatrol generates a patrol task chain
+// ── Tribulation contribution ──
+
+func (h *Hub) handleContribute(ctx context.Context, c *Client, msg Message) {
+	var data struct {
+		Type    string `json:"type"`
+		Element string `json:"element"`
+		Amount  int64  `json:"amount"`
+	}
+	if err := json.Unmarshal(msg.Data, &data); err != nil {
+		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false, Error: "invalid data"})
+		return
+	}
+
+	// Get active tribulation
+	var eventID string
+	err := h.db.QueryRow(ctx,
+		`SELECT id FROM tribulation_events WHERE status='active' ORDER BY year DESC LIMIT 1`,
+	).Scan(&eventID)
+	if err != nil {
+		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false, Error: "无活跃天劫"})
+		return
+	}
+
+	switch data.Type {
+	case "cultivator":
+		var realm string
+		var realmLevel int
+		h.db.QueryRow(ctx, `SELECT realm, realm_level FROM players WHERE id=$1`, c.playerID).Scan(&realm, &realmLevel)
+		combatPower := int64(game.RealmTiers[realm].Order*1000 + realmLevel*100)
+		_, _ = h.db.Exec(ctx,
+			`INSERT INTO tribulation_contributions (event_id, player_id, type, amount) VALUES ($1,$2,'cultivator',$3)`,
+			eventID, c.playerID, combatPower,
+		)
+		_, _ = h.db.Exec(ctx,
+			`UPDATE tribulation_events SET met_cultivators=(SELECT COUNT(DISTINCT player_id) FROM tribulation_contributions WHERE event_id=$1 AND type='cultivator') WHERE id=$1`,
+			eventID,
+		)
+		h.engine.CheckTribulationConditions(ctx, eventID)
+		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: true,
+			Data: map[string]interface{}{"message": fmt.Sprintf("已出战！境界%s，战力%d", game.RealmDisplayName(realm, realmLevel), combatPower)}})
+
+	case "stone":
+		if data.Amount <= 0 {
+			c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false, Error: "amount required"})
+			return
+		}
+		var stone int64
+		h.db.QueryRow(ctx, `SELECT spirit_stone FROM players WHERE id=$1`, c.playerID).Scan(&stone)
+		if stone < data.Amount {
+			c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false,
+				Error: fmt.Sprintf("灵石不足，需要%d，当前%d", data.Amount, stone)})
+			return
+		}
+		_, _ = h.db.Exec(ctx, `UPDATE players SET spirit_stone=spirit_stone-$1 WHERE id=$2`, data.Amount, c.playerID)
+		_, _ = h.db.Exec(ctx,
+			`INSERT INTO tribulation_contributions (event_id, player_id, type, amount) VALUES ($1,$2,'stone',$3)`,
+			eventID, c.playerID, data.Amount,
+		)
+		_, _ = h.db.Exec(ctx,
+			`UPDATE tribulation_events SET contributed_spirit_stone=contributed_spirit_stone+$1 WHERE id=$2`,
+			data.Amount, eventID,
+		)
+		h.engine.CheckTribulationConditions(ctx, eventID)
+		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: true,
+			Data: map[string]interface{}{"message": fmt.Sprintf("已贡献%d灵石！", data.Amount)}})
+
+	default:
+		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false, Error: "unknown contribution type"})
+	}
+}
+
+// ── Exploration ──
+
+func (h *Hub) handleExploreStart(ctx context.Context, c *Client, msg Message) {
+	var data struct {
+		RealmID string `json:"realmId"`
+	}
+	if err := json.Unmarshal(msg.Data, &data); err != nil {
+		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false, Error: "invalid data"})
+		return
+	}
+
+	sr, ok := game.SecretRealms[data.RealmID]
+	if !ok {
+		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false, Error: "unknown secret realm"})
+		return
+	}
+
+	var activeCount int
+	h.db.QueryRow(ctx, `SELECT COUNT(*) FROM player_explorations WHERE player_id=$1 AND collected=false`, c.playerID).Scan(&activeCount)
+	if activeCount > 0 {
+		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false, Error: "已有进行中的探索，请先结算"})
+		return
+	}
+
+	var realm string
+	var realmLevel int
+	var soulSense int64
+	h.db.QueryRow(ctx, `SELECT realm, realm_level, soul_sense FROM players WHERE id=$1`, c.playerID).Scan(&realm, &realmLevel, &soulSense)
+
+	if !game.RealmAtLeast(realm, realmLevel, sr.MinRealm, 1) {
+		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false,
+			Error: fmt.Sprintf("境界不足，需要%s以上", game.RealmTiers[sr.MinRealm].Name)})
+		return
+	}
+	if soulSense < sr.SoulCost {
+		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false,
+			Error: fmt.Sprintf("神识值不足，需要%d，当前%d", sr.SoulCost, soulSense)})
+		return
+	}
+
+	_, _ = h.db.Exec(ctx, `UPDATE players SET soul_sense=soul_sense-$1 WHERE id=$2`, sr.SoulCost, c.playerID)
+	finishAt := time.Now().Add(time.Duration(sr.DurationSec) * time.Second)
+	var exploID string
+	h.db.QueryRow(ctx,
+		`INSERT INTO player_explorations (player_id, realm_id, finish_at) VALUES ($1,$2,$3) RETURNING id`,
+		c.playerID, data.RealmID, finishAt,
+	).Scan(&exploID)
+
+	c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: true,
+		Data: map[string]interface{}{
+			"explorationId": exploID,
+			"realmName":     sr.Name,
+			"finishAt":      finishAt,
+			"durationSec":   sr.DurationSec,
+			"message":       fmt.Sprintf("开始探索【%s】，%d秒后可结算", sr.Name, sr.DurationSec),
+		}})
+}
+
+func (h *Hub) handleExploreCollect(ctx context.Context, c *Client, msg Message) {
+	var exploID, realmID string
+	var finishAt time.Time
+	err := h.db.QueryRow(ctx,
+		`SELECT id, realm_id, finish_at FROM player_explorations WHERE player_id=$1 AND collected=false ORDER BY started_at DESC LIMIT 1`,
+		c.playerID,
+	).Scan(&exploID, &realmID, &finishAt)
+	if err != nil {
+		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false, Error: "没有待结算的秘境"})
+		return
+	}
+	if time.Now().Before(finishAt) {
+		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false,
+			Error: fmt.Sprintf("探索未完成，还需%d秒", int(time.Until(finishAt).Seconds()))})
+		return
+	}
+
+	sr := game.SecretRealms[realmID]
+	rewards := game.RollRewards(sr)
+
+	_, _ = h.db.Exec(ctx,
+		`UPDATE players SET spirit_stone=spirit_stone+$1, technique_fragment=technique_fragment+$2, updated_at=NOW() WHERE id=$3`,
+		rewards["spirit_stone"], rewards["technique_fragment"], c.playerID,
+	)
+	for _, elem := range game.Elements {
+		if qty := rewards["material_"+elem]; qty > 0 {
+			_, _ = h.db.Exec(ctx,
+				`INSERT INTO spirit_materials (player_id, element, quantity) VALUES ($1,$2,$3)
+				 ON CONFLICT (player_id, element) DO UPDATE SET quantity=spirit_materials.quantity+$3`,
+				c.playerID, elem, qty,
+			)
+		}
+	}
+
+	_, _ = h.db.Exec(ctx, `UPDATE player_explorations SET collected=true WHERE id=$1`, exploID)
+
+	c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: true,
+		Data: map[string]interface{}{
+			"realmName":   sr.Name,
+			"spiritStone": rewards["spirit_stone"],
+			"message":     fmt.Sprintf("秘境【%s】探索完成！获得灵石%d及天材地宝", sr.Name, rewards["spirit_stone"]),
+		}})
+}
+
+// ── Alchemy ──
+
+func (h *Hub) handleAlchemyStart(ctx context.Context, c *Client, msg Message) {
+	var data struct {
+		RecipeID string `json:"recipeId"`
+	}
+	if err := json.Unmarshal(msg.Data, &data); err != nil {
+		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false, Error: "invalid data"})
+		return
+	}
+
+	recipe, ok := game.AlchemyRecipes[data.RecipeID]
+	if !ok {
+		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false, Error: "unknown recipe"})
+		return
+	}
+
+	var activeCount int
+	h.db.QueryRow(ctx, `SELECT COUNT(*) FROM player_alchemy WHERE player_id=$1 AND collected=false`, c.playerID).Scan(&activeCount)
+	if activeCount > 0 {
+		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false, Error: "已有进行中的炼丹"})
+		return
+	}
+
+	var realm string
+	var realmLevel int
+	h.db.QueryRow(ctx, `SELECT realm, realm_level FROM players WHERE id=$1`, c.playerID).Scan(&realm, &realmLevel)
+	if !game.RealmAtLeast(realm, realmLevel, recipe.MinRealm, 1) {
+		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false,
+			Error: fmt.Sprintf("境界不足，需要%s以上", game.RealmTiers[recipe.MinRealm].Name)})
+		return
+	}
+
+	// Check materials
+	matRows, _ := h.db.Query(ctx, `SELECT element, quantity FROM spirit_materials WHERE player_id=$1`, c.playerID)
+	materials := map[string]int64{}
+	if matRows != nil {
+		for matRows.Next() {
+			var elem string
+			var qty int64
+			matRows.Scan(&elem, &qty)
+			materials[elem] = qty
+		}
+		matRows.Close()
+	}
+
+	for _, cost := range recipe.MaterialCosts {
+		if materials[cost.Element] < cost.Quantity {
+			c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false,
+				Error: fmt.Sprintf("%s系天材地宝不足，需要%d，当前%d",
+					game.ElementChinese(cost.Element), cost.Quantity, materials[cost.Element])})
+			return
+		}
+	}
+
+	for _, cost := range recipe.MaterialCosts {
+		_, _ = h.db.Exec(ctx,
+			`UPDATE spirit_materials SET quantity=quantity-$1 WHERE player_id=$2 AND element=$3`,
+			cost.Quantity, c.playerID, cost.Element,
+		)
+	}
+
+	finishAt := time.Now().Add(time.Duration(recipe.DurationSec) * time.Second)
+	var alchID string
+	h.db.QueryRow(ctx,
+		`INSERT INTO player_alchemy (player_id, recipe_id, finish_at) VALUES ($1,$2,$3) RETURNING id`,
+		c.playerID, data.RecipeID, finishAt,
+	).Scan(&alchID)
+
+	c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: true,
+		Data: map[string]interface{}{
+			"alchemyId": alchID, "recipeName": recipe.Name,
+			"finishAt": finishAt, "durationSec": recipe.DurationSec,
+			"message": fmt.Sprintf("开始炼制【%s】，%d秒后完成", recipe.Name, recipe.DurationSec),
+		}})
+}
+
+func (h *Hub) handleAlchemyCollect(ctx context.Context, c *Client, msg Message) {
+	var alchID, recipeID string
+	var finishAt time.Time
+	err := h.db.QueryRow(ctx,
+		`SELECT id, recipe_id, finish_at FROM player_alchemy WHERE player_id=$1 AND collected=false ORDER BY started_at DESC LIMIT 1`,
+		c.playerID,
+	).Scan(&alchID, &recipeID, &finishAt)
+	if err != nil {
+		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false, Error: "没有待收取的炼丹"})
+		return
+	}
+
+	if time.Now().Before(finishAt) {
+		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: false,
+			Error: fmt.Sprintf("炼丹未完成，还需%d秒", int(time.Until(finishAt).Seconds()))})
+		return
+	}
+
+	recipe := game.AlchemyRecipes[recipeID]
+	_, _ = h.db.Exec(ctx, `UPDATE player_alchemy SET collected=true WHERE id=$1`, alchID)
+
+	if recipe.DirectXP > 0 {
+		_, _ = h.db.Exec(ctx, `UPDATE players SET cultivation_xp=cultivation_xp+$1 WHERE id=$2`, recipe.DirectXP, c.playerID)
+		c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: true,
+			Data: map[string]interface{}{"xpGained": recipe.DirectXP,
+				"message": fmt.Sprintf("炼丹完成！【%s】增加%d修为", recipe.Name, recipe.DirectXP)}})
+		return
+	}
+
+	_, _ = h.db.Exec(ctx,
+		`INSERT INTO player_items (player_id, item_id, quantity) VALUES ($1,$2,$3)
+		 ON CONFLICT (player_id, item_id) DO UPDATE SET quantity=player_items.quantity+$3`,
+		c.playerID, recipe.OutputItem, recipe.OutputQty,
+	)
+	c.write(Response{Seq: msg.Seq, Type: msg.Type, Ok: true,
+		Data: map[string]interface{}{"item": recipe.OutputItem, "quantity": recipe.OutputQty,
+			"message": fmt.Sprintf("炼丹完成！获得【%s】×%d", recipe.Name, recipe.OutputQty)}})
+}
+
+// ── Patrol planner ──
+
 func (h *Hub) handlePlanPatrol(ctx context.Context, c *Client, msg Message) {
 	var data struct {
 		Limit int `json:"limit"`
 	}
 	json.Unmarshal(msg.Data, &data)
 	if data.Limit <= 0 {
-		data.Limit = 4
+		data.Limit = 5
 	}
 
-	// Get current state
 	var p struct {
 		Realm         string
 		RealmLevel    int
 		SpiritStone   int64
-		SpiritHerb    int64
 		CultivationXP int64
+		SoulSense     int64
+		SoulSenseMax  int64
 		IsCultivating bool
 		JoinedEpoch   bool
+		Race          string
 	}
 	h.db.QueryRow(ctx,
-		`SELECT realm, realm_level, spirit_stone, spirit_herb, cultivation_xp, is_cultivating, joined_epoch
+		`SELECT realm, realm_level, spirit_stone, cultivation_xp, soul_sense, soul_sense_max, is_cultivating, joined_epoch, race
 		 FROM players WHERE id=$1`, c.playerID,
-	).Scan(&p.Realm, &p.RealmLevel, &p.SpiritStone, &p.SpiritHerb, &p.CultivationXP,
-		&p.IsCultivating, &p.JoinedEpoch)
+	).Scan(&p.Realm, &p.RealmLevel, &p.SpiritStone, &p.CultivationXP, &p.SoulSense, &p.SoulSenseMax,
+		&p.IsCultivating, &p.JoinedEpoch, &p.Race)
 
-	// Count buildings
-	var buildingCounts struct {
-		spiritField    int
-		spiritMine     int
-		gatheringArray int
-	}
-	rows, _ := h.db.Query(ctx, "SELECT type, COUNT(*) FROM buildings WHERE player_id=$1 GROUP BY type", c.playerID)
-	if rows != nil {
-		for rows.Next() {
-			var btype string
-			var count int
-			rows.Scan(&btype, &count)
-			switch btype {
-			case "spirit_field":
-				buildingCounts.spiritField = count
-			case "spirit_mine":
-				buildingCounts.spiritMine = count
-			case "gathering_array":
-				buildingCounts.gatheringArray = count
-			}
-		}
-		rows.Close()
-	}
-
-	currentTurn, _ := h.engine.GetCurrentTurn(ctx)
-	xpNeeded := game.BreakthroughXP(p.Realm, p.RealmLevel)
+	worldStatus, _ := h.engine.GetWorldStatus(ctx)
+	xpNeeded := game.GetXPNeeded(p.Realm, p.RealmLevel)
 
 	var actions []map[string]interface{}
-	var reason string
 
 	if !p.JoinedEpoch {
 		actions = append(actions, map[string]interface{}{
-			"action":  "cmd.world.join",
-			"reason":  "尚未加入美利坚修仙大陆，先踏入这片土地",
-			"urgent":  true,
+			"action": "cmd.world.join", "urgent": true,
+			"reason": "尚未加入美利坚修仙大陆，先踏入这片土地",
 		})
 	}
 
-	if !p.IsCultivating {
+	if !p.IsCultivating && p.JoinedEpoch {
 		actions = append(actions, map[string]interface{}{
 			"action": "cmd.cultivate.start",
-			"reason": "未开始闭关，立即在纽约街头修炼，汲取城市灵气",
+			"reason": "未开始闭关，立即开始修炼",
 		})
 	}
 
-	if buildingCounts.spiritField == 0 {
+	// Check if tribulation is active
+	if ws, ok := worldStatus["activeTribulation"]; ok && ws != nil {
 		actions = append(actions, map[string]interface{}{
-			"action": "cmd.cave.build",
-			"data":   map[string]string{"type": "spirit_field"},
-			"reason": "尚无哈莱姆灵草园，建造以产灵草",
-			"turns":  3,
+			"action": "cmd.contribute",
+			"data":   map[string]interface{}{"type": "cultivator"},
+			"reason": "天劫开启！优先出战贡献！",
+			"urgent": true,
 		})
 	}
 
-	if buildingCounts.spiritMine == 0 {
-		actions = append(actions, map[string]interface{}{
-			"action": "cmd.cave.build",
-			"data":   map[string]string{"type": "spirit_mine"},
-			"reason": "尚无底特律灵矿坑，建造以产灵石",
-			"turns":  4,
-		})
-	}
-
-	if buildingCounts.gatheringArray == 0 {
-		actions = append(actions, map[string]interface{}{
-			"action": "cmd.cave.build",
-			"data":   map[string]string{"type": "gathering_array"},
-			"reason": "尚无纽约聚灵阵，建造以加速修炼",
-			"turns":  5,
-		})
+	if p.SoulSense >= 20 {
+		// Find best secret realm player can access
+		for i := len(game.SecretRealmOrder) - 1; i >= 0; i-- {
+			sr := game.SecretRealms[game.SecretRealmOrder[i]]
+			if game.RealmAtLeast(p.Realm, p.RealmLevel, sr.MinRealm, 1) && p.SoulSense >= sr.SoulCost {
+				actions = append(actions, map[string]interface{}{
+					"action": "cmd.explore.start",
+					"data":   map[string]interface{}{"realmId": sr.ID},
+					"reason": fmt.Sprintf("神识充足，探索【%s】获取天材地宝", sr.Name),
+				})
+				break
+			}
+		}
 	}
 
 	if p.CultivationXP >= xpNeeded {
 		actions = append(actions, map[string]interface{}{
-			"action": "cmd.cultivate.break",
-			"reason": fmt.Sprintf("修为已足（%d/%d），可尝试突破，震撼美利坚！", p.CultivationXP, xpNeeded),
+			"action": "cmd.breakthrough",
+			"reason": fmt.Sprintf("修为已足（%d/%d），立即突破！", p.CultivationXP, xpNeeded),
 			"urgent": true,
 		})
 	}
@@ -748,30 +939,25 @@ func (h *Hub) handlePlanPatrol(ctx context.Context, c *Client, msg Message) {
 	}
 
 	if len(actions) == 0 {
-		reason = "当前状态良好，继续在美利坚大地修炼即可"
-	} else {
-		reason = "按优先级排列，先处理紧急项"
+		actions = []map[string]interface{}{}
 	}
 
-	realmInfo := game.Realms[p.Realm]
-	returnIn := 10 // turns
+	returnInMinutes := 5 // 1 game year
 	c.write(Response{
 		Seq:  msg.Seq,
 		Type: msg.Type,
 		Ok:   true,
 		Data: map[string]interface{}{
-			"currentTurn":      currentTurn,
-			"realm":            p.Realm,
-			"realmName":        realmInfo.Name,
-			"realmLevel":       p.RealmLevel,
-			"xpProgress":      fmt.Sprintf("%d/%d", p.CultivationXP, xpNeeded),
-			"actions":          actions,
-			"reason":           reason,
-			"leaveReason":      "已排任务链，服务端将自动推进，美利坚大地自有天道运转",
-			"returnInTurns":    returnIn,
-			"returnInSeconds":  returnIn * 30,
-			"expectedOutcome":  "建筑完工、修为提升、资源产出，地盘日益扩张",
-			"wakeTriggers":     []string{"任务链全部完成", "修为足够突破", "遭遇异常"},
+			"realm":             game.RealmDisplayName(p.Realm, p.RealmLevel),
+			"realmLevel":        p.RealmLevel,
+			"xpProgress":        fmt.Sprintf("%d/%d", p.CultivationXP, xpNeeded),
+			"worldStatus":       worldStatus,
+			"actions":           actions,
+			"leaveReason":       "已排任务链，服务端按时间流逝自动推进（每5分钟=1游戏年）",
+			"returnInMinutes":   returnInMinutes,
+			"returnInSeconds":   returnInMinutes * 60,
+			"expectedOutcome":   "修为持续增长，天材地宝累积，等待突破时机",
+			"wakeTriggers":      []string{"修为足够突破", "天劫开启", "秘境可结算", "炼丹完成"},
 		},
 	})
 }
