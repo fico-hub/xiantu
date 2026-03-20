@@ -902,7 +902,7 @@ func GenerateCityRealmEventSeed(cityID string, playerRealm string, durationSec i
 		realmOrder = tier.Order
 	}
 	baseStone := int64((realmOrder+1)*30 + durationSec/300)
-	baseXP := int64((realmOrder+1)*5000 + int64(durationSec)*10)
+	baseXP := int64(realmOrder+1)*5000 + int64(durationSec)*10
 
 	return map[string]interface{}{
 		"location":       cr.Name,
