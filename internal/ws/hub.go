@@ -215,7 +215,7 @@ func (h *Hub) handleAuth(ctx context.Context, c *Client, msg Message) {
 			"playerID":   claims.PlayerID,
 			"agentID":    claims.AgentID,
 			"needsJoin":  !joinedEpoch,
-			"message":    "auth ok 🌙",
+			"message":    "auth ok 🌙 Welcome to Black Cultivation USA",
 		},
 	})
 }
@@ -402,7 +402,7 @@ func (h *Hub) handleWorldJoin(ctx context.Context, c *Client, msg Message) {
 		Type: msg.Type,
 		Ok:   true,
 		Data: map[string]interface{}{
-			"message":     "🌟 已加入修真界，纪元一正式开始！",
+			"message":     "🌟 已踏入美利坚修仙大陆，黑人修仙传纪元一正式开始！",
 			"currentTurn": currentTurn,
 		},
 	})
@@ -467,7 +467,7 @@ func (h *Hub) handleCaveBuild(ctx context.Context, c *Client, msg Message) {
 			"buildTurns":   cfg.BaseBuildTurns,
 			"finishTurn":   finishTurn,
 			"currentTurn":  currentTurn,
-			"message":      fmt.Sprintf("🏗️ 开始建造【%s】，%d回合后完成", cfg.Name, cfg.BaseBuildTurns),
+			"message":      fmt.Sprintf("🏗️ 开始建造【%s】，%d回合后完工，地盘扩张中！", cfg.Name, cfg.BaseBuildTurns),
 		},
 	})
 }
@@ -524,7 +524,7 @@ func (h *Hub) handleCaveUpgrade(ctx context.Context, c *Client, msg Message) {
 			"upgradeTurns": upgradeTurns,
 			"finishTurn":  finishTurn,
 			"currentTurn": currentTurn,
-			"message":     fmt.Sprintf("⬆️ 开始升级【%s】至 Lv%d，%d回合后完成", cfg.Name, level+1, upgradeTurns),
+			"message":     fmt.Sprintf("⬆️ 开始升级【%s】至 Lv%d，%d回合后完成，势力日益壮大！", cfg.Name, level+1, upgradeTurns),
 		},
 	})
 }
@@ -552,7 +552,7 @@ func (h *Hub) handleCultivateStart(ctx context.Context, c *Client, msg Message) 
 		Type: msg.Type,
 		Ok:   true,
 		Data: map[string]interface{}{
-			"message": "🧘 已进入闭关状态，每回合自动获得修为",
+			"message": "🧘 已进入闭关修炼，于美利坚大地汲取灵气，每回合自动获得修为",
 		},
 	})
 }
@@ -616,7 +616,7 @@ func (h *Hub) handleCultivateBreak(ctx context.Context, c *Client, msg Message) 
 	newRealmInfo := game.Realms[newRealm]
 	message := fmt.Sprintf("🎉 突破成功！进阶至【%s 第%d层】！剩余修为：%d", newRealmInfo.Name, newLevel, newXP)
 	if newRealm != realm {
-		message = fmt.Sprintf("🔥 大突破！踏入【%s】，天地灵气涌动！剩余修为：%d", newRealmInfo.Name, newXP)
+		message = fmt.Sprintf("🔥 大突破！踏入【%s】，美利坚灵气涌动，黑人修士威震四方！剩余修为：%d", newRealmInfo.Name, newXP)
 	}
 
 	c.write(Response{
@@ -696,7 +696,7 @@ func (h *Hub) handlePlanPatrol(ctx context.Context, c *Client, msg Message) {
 	if !p.JoinedEpoch {
 		actions = append(actions, map[string]interface{}{
 			"action":  "cmd.world.join",
-			"reason":  "尚未加入纪元，先加入修真界",
+			"reason":  "尚未加入美利坚修仙大陆，先踏入这片土地",
 			"urgent":  true,
 		})
 	}
@@ -704,7 +704,7 @@ func (h *Hub) handlePlanPatrol(ctx context.Context, c *Client, msg Message) {
 	if !p.IsCultivating {
 		actions = append(actions, map[string]interface{}{
 			"action": "cmd.cultivate.start",
-			"reason": "未开始闭关，立即开始修炼",
+			"reason": "未开始闭关，立即在纽约街头修炼，汲取城市灵气",
 		})
 	}
 
@@ -712,7 +712,7 @@ func (h *Hub) handlePlanPatrol(ctx context.Context, c *Client, msg Message) {
 		actions = append(actions, map[string]interface{}{
 			"action": "cmd.cave.build",
 			"data":   map[string]string{"type": "spirit_field"},
-			"reason": "尚无灵田，建造以产灵草",
+			"reason": "尚无哈莱姆灵草园，建造以产灵草",
 			"turns":  3,
 		})
 	}
@@ -721,7 +721,7 @@ func (h *Hub) handlePlanPatrol(ctx context.Context, c *Client, msg Message) {
 		actions = append(actions, map[string]interface{}{
 			"action": "cmd.cave.build",
 			"data":   map[string]string{"type": "spirit_mine"},
-			"reason": "尚无灵矿，建造以产灵石",
+			"reason": "尚无底特律灵矿坑，建造以产灵石",
 			"turns":  4,
 		})
 	}
@@ -730,7 +730,7 @@ func (h *Hub) handlePlanPatrol(ctx context.Context, c *Client, msg Message) {
 		actions = append(actions, map[string]interface{}{
 			"action": "cmd.cave.build",
 			"data":   map[string]string{"type": "gathering_array"},
-			"reason": "尚无聚灵阵，建造以加速修炼",
+			"reason": "尚无纽约聚灵阵，建造以加速修炼",
 			"turns":  5,
 		})
 	}
@@ -738,7 +738,7 @@ func (h *Hub) handlePlanPatrol(ctx context.Context, c *Client, msg Message) {
 	if p.CultivationXP >= xpNeeded {
 		actions = append(actions, map[string]interface{}{
 			"action": "cmd.cultivate.break",
-			"reason": fmt.Sprintf("修为已足（%d/%d），可尝试突破！", p.CultivationXP, xpNeeded),
+			"reason": fmt.Sprintf("修为已足（%d/%d），可尝试突破，震撼美利坚！", p.CultivationXP, xpNeeded),
 			"urgent": true,
 		})
 	}
@@ -748,7 +748,7 @@ func (h *Hub) handlePlanPatrol(ctx context.Context, c *Client, msg Message) {
 	}
 
 	if len(actions) == 0 {
-		reason = "当前状态良好，继续修炼即可"
+		reason = "当前状态良好，继续在美利坚大地修炼即可"
 	} else {
 		reason = "按优先级排列，先处理紧急项"
 	}
@@ -767,10 +767,10 @@ func (h *Hub) handlePlanPatrol(ctx context.Context, c *Client, msg Message) {
 			"xpProgress":      fmt.Sprintf("%d/%d", p.CultivationXP, xpNeeded),
 			"actions":          actions,
 			"reason":           reason,
-			"leaveReason":      "已排任务链，服务端将自动推进",
+			"leaveReason":      "已排任务链，服务端将自动推进，美利坚大地自有天道运转",
 			"returnInTurns":    returnIn,
 			"returnInSeconds":  returnIn * 30,
-			"expectedOutcome":  "建筑完工、修为提升、资源产出",
+			"expectedOutcome":  "建筑完工、修为提升、资源产出，地盘日益扩张",
 			"wakeTriggers":     []string{"任务链全部完成", "修为足够突破", "遭遇异常"},
 		},
 	})

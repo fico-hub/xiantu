@@ -98,7 +98,7 @@ func (h *Handler) Register(c *fiber.Ctx) error {
 		"spiritRoot":         rootName,
 		"spiritRootName":     rootDisplayName,
 		"spiritRootMultiplier": multiplier,
-		"message":            fmt.Sprintf("🎊 恭喜！你的灵根为【%s】，修炼速度×%.1f", rootDisplayName, multiplier),
+		"message":            fmt.Sprintf("🎊 恭喜！你的血脉为【%s】，修炼速度×%.1f，欢迎来到黑人修仙传！", rootDisplayName, multiplier),
 	})
 }
 
