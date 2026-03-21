@@ -216,11 +216,11 @@ func (h *Handler) Register(c *fiber.Ctx) error {
 		"worldIntro": "美利坚大陆，公元2026年，灵气复苏。古老的修仙之道在新大陆重新萌芽，各族裔天才修士相继觉醒。哈莱姆的非裔修士、洛杉矶的拉丁裔道者、旧金山唐人街的华裔炼丹师……众修士在这片土地上修炼、突破、探秘，共同抵御定期降临的天劫。",
 		"gameGoal":   "你的目标：修炼突破境界（练气→筑基→结丹→元婴→化神→…），积累灵石与天材地宝，在天劫来临时贡献力量共同渡劫，让你的名字永刻英雄榜。这是一个放置游戏——上线领收益、做决策、离线等待，服务端时间自然流逝（每5分钟=1游戏年）。",
 		"tips": []string{
-			"立即调用 POST /api/cultivate/offline 领取首次离线修为，无需等待CD",
-			"调用 GET /api/world/status 查看天劫倒计时，提前准备贡献材料",
-			"探索秘境（POST /api/city-realms/:id/enter）获取灵石和天材地宝，为突破做准备",
+			"洞府初定，先打坐领取一番灵气积累（POST /api/cultivate/offline），无需等候",
+			"天劫将至，可观天象查看倒计时（GET /api/world/status），提前囤积五行天材以备渡劫",
+			"入城探秘（POST /api/city-realms/:id/enter）可获灵石与功法残页，积蓄底蕴方可破境飞升",
 		},
-		"message": fmt.Sprintf("恭喜！你的灵根为【%s】（修炼速度×%.1f），族裔为【%s】，初始洞府为【%s】，赠送初始灵石500枚，欢迎踏入《黑人修仙传》！",
+		"message": fmt.Sprintf("天道有感，灵根初现！汝灵根为【%s】（修炼倍率×%.1f），族裔【%s】，初定洞府【%s】，赠灵石五百以作盘缠，愿道途顺遂，早登大乘！",
 			rootDisplayName, multiplier, raceInfo.Name, birthCave.Name),
 	})
 }
@@ -301,9 +301,9 @@ func (h *Handler) Login(c *fiber.Ctx) error {
 			"cave":         caveID,
 		},
 		"tips": []string{
-			"先调用 POST /api/cultivate/offline 领取离线修为",
-			"调用 GET /api/world/status 查看天劫倒计时，天劫窗口开启时优先贡献",
-			"修为满了记得 POST /api/breakthrough 突破境界",
+			"离府已久，速打坐领取积累修为（POST /api/cultivate/offline）",
+			"天劫将临，观天象查看倒计时（GET /api/world/status），天劫窗口开启时优先贡献五行天材",
+			"修为圆满莫迟疑，速行突破（POST /api/breakthrough）以证大道",
 		},
 	})
 }
@@ -883,7 +883,7 @@ func (h *Handler) OfflineCultivation(c *fiber.Ctx) error {
 		"hpRecovered":     hpRecovered,
 		"manaRecovered":   manaRecovered,
 		"inCave":          hasCave,
-		"message": fmt.Sprintf("离线修炼%d秒（约%d游戏年），获得%d修为%s",
+		"message": fmt.Sprintf("洞府打坐%d秒（约%d游戏年），灵气沉淀，斩获%d修为%s",
 			req.Duration, yearsOffline, totalXP,
 			func() string {
 				if hasCave && (hpRecovered > 0 || manaRecovered > 0) {
@@ -1200,7 +1200,7 @@ func (h *Handler) ExploreSecretRealm(c *fiber.Ctx) error {
 		"realmName":     sr.Name,
 		"durationSec":   sr.DurationSec,
 		"finishAt":      finishAt,
-		"message":       fmt.Sprintf("开始探索【%s】，%d秒后可结算收益", sr.Name, sr.DurationSec),
+		"message":       fmt.Sprintf("踏入【%s】秘境，灵气弥漫，%d秒后方可出境结算收益", sr.Name, sr.DurationSec),
 	})
 }
 
@@ -1262,7 +1262,7 @@ func (h *Handler) CollectExploration(c *fiber.Ctx) error {
 			"techniqueFragment": rewards["technique_fragment"],
 			"spiritMaterials":   materialSummary,
 		},
-		"message": fmt.Sprintf("秘境【%s】探索完成！获得灵石%d、功法残页%d及各系天材地宝",
+		"message": fmt.Sprintf("自【%s】秘境归来，满载而归！获灵石%d枚、功法残页%d册，天材地宝亦有收获",
 			sr.Name, rewards["spirit_stone"], rewards["technique_fragment"]),
 	})
 }
@@ -1350,7 +1350,7 @@ func (h *Handler) StartAlchemy(c *fiber.Ctx) error {
 		"durationSec": recipe.DurationSec,
 		"finishAt":    finishAt,
 		"materialCost": costSummary,
-		"message":     fmt.Sprintf("开始炼制【%s】，%d秒后可收取", recipe.Name, recipe.DurationSec),
+		"message":     fmt.Sprintf("炉火已燃，开始炼制【%s】，约%d秒后丹成", recipe.Name, recipe.DurationSec),
 	})
 }
 
