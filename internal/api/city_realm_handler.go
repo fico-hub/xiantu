@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -95,13 +96,19 @@ func (h *Handler) CityRealmEnter(c *fiber.Ctx) error {
 		return c.Status(400).JSON(fiber.Map{"error": "已有进行中的城市秘境探索，请先结算前次收益，方可再度踏入"})
 	}
 
-	// Check soul sense
+	// Check soul sense and HP
 	var soulSense int64
-	h.db.QueryRow(ctx, `SELECT soul_sense FROM players WHERE id=$1`, playerID).Scan(&soulSense)
+	var playerHP int
+	h.db.QueryRow(ctx, `SELECT soul_sense, hp FROM players WHERE id=$1`, playerID).Scan(&soulSense, &playerHP)
 
 	if soulSense < cr.SoulCost {
 		return c.Status(400).JSON(fiber.Map{
 			"error": fmt.Sprintf("神识不足，此地灵气复杂，探索需消耗%d神识，当前仅余%d——请休养一段时间后再来", cr.SoulCost, soulSense),
+		})
+	}
+	if playerHP <= 0 {
+		return c.Status(400).JSON(fiber.Map{
+			"error": "体力耗尽！你的修士伤痕累累，无力再战。请先在洞府打坐修养，待体力恢复后再探秘境。",
 		})
 	}
 
@@ -110,6 +117,24 @@ func (h *Handler) CityRealmEnter(c *fiber.Ctx) error {
 		`UPDATE players SET soul_sense=soul_sense-$1, updated_at=NOW() WHERE id=$2`,
 		cr.SoulCost, playerID,
 	)
+
+	// 20% chance to take HP damage on entering secret realm (dangerous)
+	hpDamage := 0
+	if rand.Intn(100) < 20 {
+		hpDamage = 5 + rand.Intn(11) // 5~15 damage
+		if hpDamage >= playerHP {
+			hpDamage = playerHP - 1 // don't reduce to 0 on enter
+			if hpDamage < 1 {
+				hpDamage = 0
+			}
+		}
+		if hpDamage > 0 {
+			_, _ = h.db.Exec(ctx,
+				`UPDATE players SET hp=GREATEST(hp-$1, 1), updated_at=NOW() WHERE id=$2`,
+				hpDamage, playerID,
+			)
+		}
+	}
 
 	// Pre-generate narrative seed and rewards
 	rewards, narrativeSeed := game.RollCityRealmRewards(cr)
@@ -129,6 +154,12 @@ func (h *Handler) CityRealmEnter(c *fiber.Ctx) error {
 	// Store rewards temporarily in narrative seed for retrieval
 	_ = rewards
 
+	enterMsg := fmt.Sprintf("踏入【%s】秘境！神识消耗%d，%d秒后可结算收益。%s",
+		cr.Name, cr.SoulCost, cr.DurationSec, narrativeSeed["narrative_hint"])
+	if hpDamage > 0 {
+		enterMsg += fmt.Sprintf("（秘境入口遭遇危险，体力-%d！）", hpDamage)
+	}
+
 	return c.JSON(fiber.Map{
 		"explorationId": exploID,
 		"cityId":        cityID,
@@ -136,10 +167,9 @@ func (h *Handler) CityRealmEnter(c *fiber.Ctx) error {
 		"durationSec":   cr.DurationSec,
 		"finishAt":      finishAt,
 		"soulCostPaid":  cr.SoulCost,
+		"hpDamage":      hpDamage,
 		"narrativeSeed": narrativeSeed,
-		"message": fmt.Sprintf("踏入【%s】秘境！神识消耗%d，%d秒后可结算收益。%s",
-			cr.Name, cr.SoulCost, cr.DurationSec,
-			narrativeSeed["narrative_hint"]),
+		"message":       enterMsg,
 	})
 }
 
@@ -258,6 +288,39 @@ func (h *Handler) CityRealmExit(c *fiber.Ctx) error {
 		}
 	}
 
+	// Mana bonus: 30% chance to get extra spirit materials if player has mana
+	manaConsumed := 0
+	manaBonus := false
+	var playerMana int
+	var playerRealm2 string
+	h.db.QueryRow(ctx,
+		`SELECT mana, realm FROM players WHERE id=$1`, playerID,
+	).Scan(&playerMana, &playerRealm2)
+
+	manaCostForBonus := game.MaxManaByRealm(playerRealm2) / 10 // 10% of max mana
+	if manaCostForBonus < 1 {
+		manaCostForBonus = 1
+	}
+	if rand.Intn(100) < 30 && playerMana >= manaCostForBonus {
+		// Consume mana, give bonus materials
+		manaConsumed = manaCostForBonus
+		manaBonus = true
+		_, _ = h.db.Exec(ctx,
+			`UPDATE players SET mana=GREATEST(mana-$1,0), updated_at=NOW() WHERE id=$2`,
+			manaConsumed, playerID,
+		)
+		// Bonus: extra materials for a random element
+		bonusElem := cr.Elements[rand.Intn(len(cr.Elements))]
+		bonusQty := int64(2 + rand.Intn(4)) // 2~5 bonus materials
+		_, _ = h.db.Exec(ctx,
+			`INSERT INTO spirit_materials (player_id, element, quantity) VALUES ($1, $2, $3)
+			 ON CONFLICT (player_id, element) DO UPDATE SET quantity=spirit_materials.quantity+$3`,
+			playerID, bonusElem, bonusQty,
+		)
+		rewards["material_"+bonusElem] += bonusQty
+		materialSummary[bonusElem] += bonusQty
+	}
+
 	// Mark collected
 	_, _ = h.db.Exec(ctx, `UPDATE city_realm_explorations SET collected=true WHERE id=$1`, exploID)
 
@@ -285,8 +348,14 @@ func (h *Handler) CityRealmExit(c *fiber.Ctx) error {
 	}
 
 	hint := ""
-	if h, ok := narrativeSeed["narrative_hint"].(string); ok {
-		hint = h
+	if h2, ok := narrativeSeed["narrative_hint"].(string); ok {
+		hint = h2
+	}
+
+	exitMsg := fmt.Sprintf("【%s】秘境探索结算！获得修为%d、灵石%d。%s",
+		cr.Name, rewards["cultivation_xp"], rewards["spirit_stone"], hint)
+	if manaBonus {
+		exitMsg += fmt.Sprintf("（灵力充沛，消耗%d灵力获得额外天材地宝！）", manaConsumed)
 	}
 
 	return c.JSON(fiber.Map{
@@ -299,10 +368,11 @@ func (h *Handler) CityRealmExit(c *fiber.Ctx) error {
 			"spiritStone":   rewards["spirit_stone"],
 			"spiritMaterials": materialSummary,
 		},
+		"manaBonus":       manaBonus,
+		"manaConsumed":    manaConsumed,
 		"narrativeSeed":   narrativeSeed,
 		"locationEvent":   extSeed,
 		"narrativeHint":   hint,
-		"message": fmt.Sprintf("【%s】秘境探索结算！获得修为%d、灵石%d。%s",
-			cr.Name, rewards["cultivation_xp"], rewards["spirit_stone"], hint),
+		"message":         exitMsg,
 	})
 }

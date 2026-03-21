@@ -1202,6 +1202,74 @@ func RollCityRealmRewards(cr CityRealm) (map[string]int64, map[string]interface{
 	return rewards, seed
 }
 
+// ========== 体力+灵力系统 ==========
+
+// MaxHPByRealm returns the maximum HP for a given realm
+func MaxHPByRealm(realm string) int {
+	tier, ok := RealmTiers[realm]
+	if !ok {
+		return 100
+	}
+	switch {
+	case tier.Order >= 4: // 化神期+
+		return 1000
+	case tier.Order == 3: // 元婴期
+		return 700
+	case tier.Order == 2: // 结丹期
+		return 400
+	case tier.Order == 1: // 筑基期
+		return 200
+	default: // 练气期
+		return 100
+	}
+}
+
+// MaxManaByRealm returns the maximum Mana for a given realm
+func MaxManaByRealm(realm string) int {
+	tier, ok := RealmTiers[realm]
+	if !ok {
+		return 50
+	}
+	switch {
+	case tier.Order >= 4: // 化神期+
+		return 700
+	case tier.Order == 3: // 元婴期
+		return 450
+	case tier.Order == 2: // 结丹期
+		return 250
+	case tier.Order == 1: // 筑基期
+		return 120
+	default: // 练气期
+		return 50
+	}
+}
+
+// CalcHPRecovery returns HP to recover given max_hp, game years elapsed.
+// Rate: 5% of max per game year, minimum 1.
+func CalcHPRecovery(maxHP int, years int64) int {
+	if years <= 0 {
+		return 0
+	}
+	recovered := int(float64(maxHP)*0.05) * int(years)
+	if recovered < int(years) { // ensure at least 1 per year
+		recovered = int(years)
+	}
+	return recovered
+}
+
+// CalcManaRecovery returns Mana to recover given max_mana, game years elapsed.
+// Rate: 5% of max per game year, minimum 1.
+func CalcManaRecovery(maxMana int, years int64) int {
+	if years <= 0 {
+		return 0
+	}
+	recovered := int(float64(maxMana)*0.05) * int(years)
+	if recovered < int(years) {
+		recovered = int(years)
+	}
+	return recovered
+}
+
 // ========== 修为计算 ==========
 
 const (

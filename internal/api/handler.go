@@ -99,7 +99,7 @@ func (h *Handler) Register(c *fiber.Ctx) error {
 	}
 
 	if req.Race == "" {
-		req.Race = "chinese"
+		req.Race = game.RaceOrder[rand.Intn(len(game.RaceOrder))]
 	}
 	if _, ok := game.Races[req.Race]; !ok {
 		return c.Status(400).JSON(fiber.Map{
@@ -116,12 +116,16 @@ func (h *Handler) Register(c *fiber.Ctx) error {
 	rootName, multiplier := game.RollSpiritRoot()
 	agentID := "agt-" + uuid.New().String()[:12]
 
+	// New players start at 练气期 (qi_refining)
+	initMaxHP := game.MaxHPByRealm("qi_refining")
+	initMaxMana := game.MaxManaByRealm("qi_refining")
+
 	ctx := context.Background()
 	var playerID string
 	err = h.db.QueryRow(ctx,
-		`INSERT INTO players (username, password_hash, agent_id, spirit_root, spirit_root_multiplier, race, last_offline_claim)
-		 VALUES ($1, $2, $3, $4, $5, $6, '0001-01-01T00:00:00Z') RETURNING id`,
-		req.Username, string(hash), agentID, rootName, multiplier, req.Race,
+		`INSERT INTO players (username, password_hash, agent_id, spirit_root, spirit_root_multiplier, race, last_offline_claim, hp, max_hp, mana, max_mana)
+		 VALUES ($1, $2, $3, $4, $5, $6, '0001-01-01T00:00:00Z', $7, $7, $8, $8) RETURNING id`,
+		req.Username, string(hash), agentID, rootName, multiplier, req.Race, initMaxHP, initMaxMana,
 	).Scan(&playerID)
 	if err != nil {
 		if strings.Contains(err.Error(), "unique") {
@@ -129,6 +133,28 @@ func (h *Handler) Register(c *fiber.Ctx) error {
 		}
 		return c.Status(500).JSON(fiber.Map{"error": fmt.Sprintf("db error: %v", err)})
 	}
+
+	// Assign a random birth cave (initial dwelling) from available caves
+	birthCaveID := game.CaveOrder[rand.Intn(len(game.CaveOrder))]
+	// Try to find an unoccupied cave; fall back to any random cave if all occupied
+	for _, cid := range game.CaveOrder {
+		var cnt int
+		if err2 := h.db.QueryRow(ctx, `SELECT COUNT(*) FROM cave_occupations WHERE cave_id=$1`, cid).Scan(&cnt); err2 == nil && cnt == 0 {
+			birthCaveID = cid
+			break
+		}
+	}
+	currentYear, _ := h.engine.GetCurrentYear(ctx)
+	if currentYear < 1 {
+		currentYear = 1
+	}
+	_, _ = h.db.Exec(ctx,
+		`INSERT INTO cave_occupations (cave_id, player_id, last_reward_year)
+		 VALUES ($1, $2, $3)
+		 ON CONFLICT (cave_id) DO UPDATE SET player_id=$2, occupied_at=NOW(), last_reward_year=$3`,
+		birthCaveID, playerID, currentYear,
+	)
+	birthCave := game.LocationCaves[birthCaveID]
 
 	token, expiresAt, err := auth.GenerateToken(playerID, agentID, h.jwtSecret)
 	if err != nil {
@@ -173,19 +199,27 @@ func (h *Handler) Register(c *fiber.Ctx) error {
 		"world_year":               worldYear,
 		"next_tribulation_year":    nextTribYear,
 		"next_tribulation_element": game.ElementChinese(nextTribElement),
+		"birthCave": fiber.Map{
+			"id":        birthCave.ID,
+			"name":      birthCave.Name,
+			"nameEn":    birthCave.NameEn,
+			"element":   birthCave.Element,
+			"elementCn": game.ElementChinese(birthCave.Element),
+			"desc":      birthCave.Desc,
+		},
 		"character": fiber.Map{
 			"realm":        "练气期一层",
 			"xp":           0,
 			"spirit_stone": 0,
-			"cave":         nil,
+			"cave":         birthCaveID,
 		},
 		"tips": []string{
 			"立即调用 POST /api/cultivate/offline 领取首次离线修为，无需等待CD",
 			"调用 GET /api/world/status 查看天劫倒计时，提前准备贡献材料",
 			"探索秘境（POST /api/city-realms/:id/enter）获取灵石和天材地宝，为突破做准备",
 		},
-		"message": fmt.Sprintf("恭喜！你的灵根为【%s】（修炼速度×%.1f），族裔为【%s】，欢迎踏入《黑人修仙传》！",
-			rootDisplayName, multiplier, raceInfo.Name),
+		"message": fmt.Sprintf("恭喜！你的灵根为【%s】（修炼速度×%.1f），族裔为【%s】，初始洞府为【%s】，欢迎踏入《黑人修仙传》！",
+			rootDisplayName, multiplier, raceInfo.Name, birthCave.Name),
 	})
 }
 
@@ -296,19 +330,25 @@ func (h *Handler) Profile(c *fiber.Ctx) error {
 		IsCultivating     bool
 		JoinedEpoch       bool
 		CreatedAt         time.Time
+		HP                int
+		MaxHP             int
+		Mana              int
+		MaxMana           int
 	}
 
 	err := h.db.QueryRow(ctx,
 		`SELECT id, username, agent_id, spirit_root, spirit_root_multiplier, race,
 		 realm, realm_level, spirit_stone, cultivation_xp, technique_fragment,
 		 soul_sense, soul_sense_max, cave_level, equipped_technique,
-		 is_cultivating, joined_epoch, created_at
+		 is_cultivating, joined_epoch, created_at,
+		 hp, max_hp, mana, max_mana
 		 FROM players WHERE id=$1`,
 		playerID,
 	).Scan(&p.ID, &p.Username, &p.AgentID, &p.SpiritRoot, &p.Multiplier, &p.Race,
 		&p.Realm, &p.RealmLevel, &p.SpiritStone, &p.CultivationXP, &p.TechniqueFragment,
 		&p.SoulSense, &p.SoulSenseMax, &p.CaveLevel, &p.EquippedTechnique,
-		&p.IsCultivating, &p.JoinedEpoch, &p.CreatedAt)
+		&p.IsCultivating, &p.JoinedEpoch, &p.CreatedAt,
+		&p.HP, &p.MaxHP, &p.Mana, &p.MaxMana)
 	if err != nil {
 		return c.Status(404).JSON(fiber.Map{"error": "player not found"})
 	}
@@ -344,6 +384,12 @@ func (h *Handler) Profile(c *fiber.Ctx) error {
 			"soulSense":         p.SoulSense,
 			"soulSenseMax":      p.SoulSenseMax,
 		},
+		"hp":                p.HP,
+		"maxHp":             p.MaxHP,
+		"mana":              p.Mana,
+		"maxMana":           p.MaxMana,
+		"hpPercent":         fmt.Sprintf("%d/%d", p.HP, p.MaxHP),
+		"manaPercent":       fmt.Sprintf("%d/%d", p.Mana, p.MaxMana),
 		"caveLevel":         p.CaveLevel,
 		"equippedTechnique": p.EquippedTechnique,
 		"xpToBreakthrough":  xpNeeded,
@@ -758,11 +804,14 @@ func (h *Handler) OfflineCultivation(c *fiber.Ctx) error {
 	var race, equippedTech string
 	var caveLevel int
 	var lastClaim time.Time
+	var hp, maxHP, mana, maxMana int
 	err := h.db.QueryRow(ctx,
-		`SELECT spirit_root_multiplier, race, cave_level, equipped_technique, last_offline_claim
+		`SELECT spirit_root_multiplier, race, cave_level, equipped_technique, last_offline_claim,
+		 hp, max_hp, mana, max_mana
 		 FROM players WHERE id=$1`,
 		playerID,
-	).Scan(&rootMultiplier, &race, &caveLevel, &equippedTech, &lastClaim)
+	).Scan(&rootMultiplier, &race, &caveLevel, &equippedTech, &lastClaim,
+		&hp, &maxHP, &mana, &maxMana)
 	if err != nil {
 		return c.Status(404).JSON(fiber.Map{"error": "player not found"})
 	}
@@ -789,6 +838,37 @@ func (h *Handler) OfflineCultivation(c *fiber.Ctx) error {
 		return c.Status(500).JSON(fiber.Map{"error": "db error"})
 	}
 
+	// Check if player has a cave — if so, recover HP and Mana
+	var hasCave bool
+	var caveID string
+	h.db.QueryRow(ctx,
+		`SELECT cave_id FROM cave_occupations WHERE player_id=$1 LIMIT 1`,
+		playerID,
+	).Scan(&caveID)
+	hasCave = caveID != ""
+
+	hpRecovered, manaRecovered := 0, 0
+	if hasCave {
+		hpRecover := game.CalcHPRecovery(maxHP, yearsOffline)
+		manaRecover := game.CalcManaRecovery(maxMana, yearsOffline)
+
+		newHP := hp + hpRecover
+		if newHP > maxHP {
+			newHP = maxHP
+		}
+		newMana := mana + manaRecover
+		if newMana > maxMana {
+			newMana = maxMana
+		}
+		hpRecovered = newHP - hp
+		manaRecovered = newMana - mana
+
+		_, _ = h.db.Exec(ctx,
+			`UPDATE players SET hp=$1, mana=$2, updated_at=NOW() WHERE id=$3`,
+			newHP, newMana, playerID,
+		)
+	}
+
 	// Check-in: maybe assign faction task (30% chance)
 	var factionTask interface{}
 	factionTask = h.CheckAndAssignFactionTasks(ctx, playerID)
@@ -798,8 +878,17 @@ func (h *Handler) OfflineCultivation(c *fiber.Ctx) error {
 		"yearsCalculated": yearsOffline,
 		"xpPerYear":       xpPerYear,
 		"totalXpEarned":   totalXP,
-		"message": fmt.Sprintf("离线修炼%d秒（约%d游戏年），获得%d修为",
-			req.Duration, yearsOffline, totalXP),
+		"hpRecovered":     hpRecovered,
+		"manaRecovered":   manaRecovered,
+		"inCave":          hasCave,
+		"message": fmt.Sprintf("离线修炼%d秒（约%d游戏年），获得%d修为%s",
+			req.Duration, yearsOffline, totalXP,
+			func() string {
+				if hasCave && (hpRecovered > 0 || manaRecovered > 0) {
+					return fmt.Sprintf("，洞府打坐恢复体力+%d、灵力+%d", hpRecovered, manaRecovered)
+				}
+				return ""
+			}()),
 	}
 	if factionTask != nil {
 		resp["factionTask"] = factionTask
@@ -893,9 +982,15 @@ func (h *Handler) Breakthrough(c *fiber.Ctx) error {
 	}
 
 	newXP := xp - needed
+
+	// Sync max_hp and max_mana on breakthrough (realm may have changed)
+	newMaxHP := game.MaxHPByRealm(newRealm)
+	newMaxMana := game.MaxManaByRealm(newRealm)
+
 	_, err = h.db.Exec(ctx,
-		`UPDATE players SET realm=$1, realm_level=$2, cultivation_xp=$3, updated_at=NOW() WHERE id=$4`,
-		newRealm, newLevel, newXP, playerID,
+		`UPDATE players SET realm=$1, realm_level=$2, cultivation_xp=$3,
+		 max_hp=$4, max_mana=$5, updated_at=NOW() WHERE id=$6`,
+		newRealm, newLevel, newXP, newMaxHP, newMaxMana, playerID,
 	)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": "db error"})
@@ -916,6 +1011,8 @@ func (h *Handler) Breakthrough(c *fiber.Ctx) error {
 		"newLevel":     newLevel,
 		"xpConsumed":   needed,
 		"xpRemaining":  newXP,
+		"maxHpUpdated": newMaxHP,
+		"maxManaUpdated": newMaxMana,
 		"message":      message,
 	})
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math/rand"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -130,6 +131,11 @@ func (e *Engine) processYear(ctx context.Context) error {
 	// 6. Process cave yearly rewards
 	if err := e.processCaveRewards(ctx, currentYear); err != nil {
 		log.Printf("cave rewards error: %v", err)
+	}
+
+	// 7. Recover HP/Mana for cave occupants
+	if err := e.recoverCaveHPMana(ctx); err != nil {
+		log.Printf("cave HP/Mana recovery error: %v", err)
 	}
 
 	// 7. Publish year event to Redis
@@ -284,6 +290,38 @@ func (e *Engine) resetServer(ctx context.Context) error {
 	// Reset world year
 	_, _ = e.db.Exec(ctx, `UPDATE world_state SET current_year=1, last_year_at=NOW() WHERE id=1`)
 
+	// Clear all cave occupations and reassign random caves to all players
+	_, _ = e.db.Exec(ctx, `DELETE FROM cave_occupations`)
+
+	// Fetch all player IDs
+	rows, err := e.db.Query(ctx, `SELECT id FROM players ORDER BY created_at`)
+	if err == nil {
+		var playerIDs []string
+		for rows.Next() {
+			var pid string
+			if rows.Scan(&pid) == nil {
+				playerIDs = append(playerIDs, pid)
+			}
+		}
+		rows.Close()
+
+		// Shuffle cave order so assignments are random
+		caves := make([]string, len(CaveOrder))
+		copy(caves, CaveOrder)
+		rand.Shuffle(len(caves), func(i, j int) { caves[i], caves[j] = caves[j], caves[i] })
+
+		for i, pid := range playerIDs {
+			caveID := caves[i%len(caves)]
+			_, _ = e.db.Exec(ctx,
+				`INSERT INTO cave_occupations (cave_id, player_id, last_reward_year)
+				 VALUES ($1, $2, 1)
+				 ON CONFLICT (cave_id) DO UPDATE SET player_id=$2, occupied_at=NOW(), last_reward_year=1`,
+				caveID, pid,
+			)
+		}
+		log.Printf("✅ 已为 %d 名玩家重新分配洞府", len(playerIDs))
+	}
+
 	log.Println("✅ 全服重置完成，纪年归零")
 	return nil
 }
@@ -415,6 +453,50 @@ func (e *Engine) processCaveRewards(ctx context.Context, currentYear int) error 
 		_, _ = e.db.Exec(ctx,
 			`UPDATE cave_occupations SET last_reward_year=$1 WHERE cave_id=$2`,
 			currentYear, j.CaveID,
+		)
+	}
+	return nil
+}
+
+// recoverCaveHPMana recovers HP and Mana for all current cave occupants (5% per year)
+func (e *Engine) recoverCaveHPMana(ctx context.Context) error {
+	// Get all cave occupants with their player's hp/mana state
+	rows, err := e.db.Query(ctx,
+		`SELECT co.player_id, p.hp, p.max_hp, p.mana, p.max_mana
+		 FROM cave_occupations co
+		 JOIN players p ON p.id = co.player_id`,
+	)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	type recoverJob struct {
+		PlayerID string
+		HP, MaxHP, Mana, MaxMana int
+	}
+	var jobs []recoverJob
+	for rows.Next() {
+		var j recoverJob
+		rows.Scan(&j.PlayerID, &j.HP, &j.MaxHP, &j.Mana, &j.MaxMana)
+		jobs = append(jobs, j)
+	}
+	rows.Close()
+
+	for _, j := range jobs {
+		hpRecover := CalcHPRecovery(j.MaxHP, 1)
+		manaRecover := CalcManaRecovery(j.MaxMana, 1)
+		newHP := j.HP + hpRecover
+		if newHP > j.MaxHP {
+			newHP = j.MaxHP
+		}
+		newMana := j.Mana + manaRecover
+		if newMana > j.MaxMana {
+			newMana = j.MaxMana
+		}
+		_, _ = e.db.Exec(ctx,
+			`UPDATE players SET hp=$1, mana=$2, updated_at=NOW() WHERE id=$3`,
+			newHP, newMana, j.PlayerID,
 		)
 	}
 	return nil

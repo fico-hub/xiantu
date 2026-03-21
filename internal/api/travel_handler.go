@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"strconv"
 	"strings"
 
@@ -207,13 +208,46 @@ func (h *Handler) TravelStatus(c *fiber.Ctx) error {
 		// Mark as arrived
 		_, _ = h.db.Exec(ctx,
 			`UPDATE player_travels SET status='arrived' WHERE id=$1`, travelID)
+
+		// HP damage on long-distance travel (proportional to travel years)
+		// Short trips (1-2 years): 15% chance; medium (3-10): 25%; long (10+): 40%
+		var hp int
+		h.db.QueryRow(ctx, `SELECT hp FROM players WHERE id=$1`, playerID).Scan(&hp)
+
+		travelDmgChance := 15
+		if travelYears >= 10 {
+			travelDmgChance = 40
+		} else if travelYears >= 3 {
+			travelDmgChance = 25
+		}
+
+		travelHPDmg := 0
+		arrivalMsg := fmt.Sprintf("已抵达【%s】！可以开始探索或占领了。", destName)
+		if rand.Intn(100) < travelDmgChance {
+			travelHPDmg = 5 + rand.Intn(11) // 5~15 damage
+			if travelHPDmg >= hp {
+				travelHPDmg = hp - 1
+				if travelHPDmg < 1 {
+					travelHPDmg = 0
+				}
+			}
+			if travelHPDmg > 0 {
+				_, _ = h.db.Exec(ctx,
+					`UPDATE players SET hp=GREATEST(hp-$1, 1), updated_at=NOW() WHERE id=$2`,
+					travelHPDmg, playerID,
+				)
+				arrivalMsg += fmt.Sprintf("（长途跋涉损耗体力-%d！）", travelHPDmg)
+			}
+		}
+
 		return c.JSON(fiber.Map{
-			"traveling":   false,
-			"arrived":     true,
-			"destination": destName,
-			"destType":    destType,
-			"destId":      destID,
-			"message":     fmt.Sprintf("已抵达【%s】！可以开始探索或占领了。", destName),
+			"traveling":    false,
+			"arrived":      true,
+			"destination":  destName,
+			"destType":     destType,
+			"destId":       destID,
+			"hpDamage":     travelHPDmg,
+			"message":      arrivalMsg,
 		})
 	}
 

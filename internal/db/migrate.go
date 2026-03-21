@@ -217,6 +217,15 @@ CREATE INDEX IF NOT EXISTS idx_world_events_active_until ON world_events(active_
 CREATE INDEX IF NOT EXISTS idx_world_events_created ON world_events(created_at DESC);
 `
 
+// hpManaSchema adds hp/mana columns to players
+const hpManaSchema = `
+-- ========== 体力+灵力系统 ==========
+ALTER TABLE players ADD COLUMN IF NOT EXISTS hp      INT NOT NULL DEFAULT 100;
+ALTER TABLE players ADD COLUMN IF NOT EXISTS max_hp  INT NOT NULL DEFAULT 100;
+ALTER TABLE players ADD COLUMN IF NOT EXISTS mana    INT NOT NULL DEFAULT 50;
+ALTER TABLE players ADD COLUMN IF NOT EXISTS max_mana INT NOT NULL DEFAULT 50;
+`
+
 // migrationSQL handles upgrading existing databases
 const migrationSQL = `
 -- Add race column if not exists
@@ -345,6 +354,10 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 	_, err = pool.Exec(ctx, wishesAndWorldEventsSchema)
 	if err != nil {
 		return fmt.Errorf("migrate wishes/world_events: %w", err)
+	}
+	_, err = pool.Exec(ctx, hpManaSchema)
+	if err != nil {
+		return fmt.Errorf("migrate hp/mana: %w", err)
 	}
 	return nil
 }
