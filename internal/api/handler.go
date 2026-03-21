@@ -123,8 +123,8 @@ func (h *Handler) Register(c *fiber.Ctx) error {
 	ctx := context.Background()
 	var playerID string
 	err = h.db.QueryRow(ctx,
-		`INSERT INTO players (username, password_hash, agent_id, spirit_root, spirit_root_multiplier, race, last_offline_claim, hp, max_hp, mana, max_mana)
-		 VALUES ($1, $2, $3, $4, $5, $6, '0001-01-01T00:00:00Z', $7, $7, $8, $8) RETURNING id`,
+		`INSERT INTO players (username, password_hash, agent_id, spirit_root, spirit_root_multiplier, race, last_offline_claim, hp, max_hp, mana, max_mana, spirit_stone)
+		 VALUES ($1, $2, $3, $4, $5, $6, '0001-01-01T00:00:00Z', $7, $7, $8, $8, 500) RETURNING id`,
 		req.Username, string(hash), agentID, rootName, multiplier, req.Race, initMaxHP, initMaxMana,
 	).Scan(&playerID)
 	if err != nil {
@@ -210,15 +210,17 @@ func (h *Handler) Register(c *fiber.Ctx) error {
 		"character": fiber.Map{
 			"realm":        "练气期一层",
 			"xp":           0,
-			"spirit_stone": 0,
+			"spirit_stone": 500,
 			"cave":         birthCaveID,
 		},
+		"worldIntro": "美利坚大陆，公元2026年，灵气复苏。古老的修仙之道在新大陆重新萌芽，各族裔天才修士相继觉醒。哈莱姆的非裔修士、洛杉矶的拉丁裔道者、旧金山唐人街的华裔炼丹师……众修士在这片土地上修炼、突破、探秘，共同抵御定期降临的天劫。",
+		"gameGoal":   "你的目标：修炼突破境界（练气→筑基→结丹→元婴→化神→…），积累灵石与天材地宝，在天劫来临时贡献力量共同渡劫，让你的名字永刻英雄榜。这是一个放置游戏——上线领收益、做决策、离线等待，服务端时间自然流逝（每5分钟=1游戏年）。",
 		"tips": []string{
 			"立即调用 POST /api/cultivate/offline 领取首次离线修为，无需等待CD",
 			"调用 GET /api/world/status 查看天劫倒计时，提前准备贡献材料",
 			"探索秘境（POST /api/city-realms/:id/enter）获取灵石和天材地宝，为突破做准备",
 		},
-		"message": fmt.Sprintf("恭喜！你的灵根为【%s】（修炼速度×%.1f），族裔为【%s】，初始洞府为【%s】，欢迎踏入《黑人修仙传》！",
+		"message": fmt.Sprintf("恭喜！你的灵根为【%s】（修炼速度×%.1f），族裔为【%s】，初始洞府为【%s】，赠送初始灵石500枚，欢迎踏入《黑人修仙传》！",
 			rootDisplayName, multiplier, raceInfo.Name, birthCave.Name),
 	})
 }
