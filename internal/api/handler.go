@@ -213,7 +213,8 @@ func (h *Handler) Register(c *fiber.Ctx) error {
 			"spirit_stone": 500,
 			"cave":         birthCaveID,
 		},
-		"worldIntro": "美利坚大陆，公元2026年，灵气复苏。古老的修仙之道在新大陆重新萌芽，各族裔天才修士相继觉醒。哈莱姆的非裔修士、洛杉矶的拉丁裔道者、旧金山唐人街的华裔炼丹师……众修士在这片土地上修炼、突破、探秘，共同抵御定期降临的天劫。",
+		"epochCount": worldStatus["epochCount"],
+		"worldIntro": fmt.Sprintf("美利坚大陆，公元2026年，灵气复苏。此为第%d纪元——天地已历%d次轮回，每逢天劫失败，世界归零重启，英雄榜永久留名。各族裔天才修士相继觉醒，在这片土地上修炼、突破、探秘，共同抵御定期降临的天劫。", worldStatus["epochCount"], worldStatus["epochCount"]-1),
 		"gameGoal":   "你的目标：修炼突破境界（练气→筑基→结丹→元婴→化神→…），积累灵石与天材地宝，在天劫来临时贡献力量共同渡劫，让你的名字永刻英雄榜。这是一个放置游戏——上线领收益、做决策、离线等待，服务端时间自然流逝（每5分钟=1游戏年）。建议每隔5分钟上线一次，打坐领取修为、察看天劫动向，切莫让修为白白积压上限而损耗。",
 		"tips": []string{
 			"洞府初定，先打坐领取一番灵气积累（POST /api/cultivate/offline），无需等候",

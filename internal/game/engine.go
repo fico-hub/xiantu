@@ -51,9 +51,10 @@ func (e *Engine) GetCurrentYear(ctx context.Context) (int, error) {
 func (e *Engine) GetWorldStatus(ctx context.Context) (map[string]interface{}, error) {
 	var currentYear int
 	var worldStartedAt time.Time
+	var epochCount int
 	err := e.db.QueryRow(ctx,
-		"SELECT current_year, world_started_at FROM world_state WHERE id=1",
-	).Scan(&currentYear, &worldStartedAt)
+		"SELECT current_year, world_started_at, COALESCE(epoch_count, 1) FROM world_state WHERE id=1",
+	).Scan(&currentYear, &worldStartedAt, &epochCount)
 	if err != nil {
 		return nil, err
 	}
@@ -62,11 +63,12 @@ func (e *Engine) GetWorldStatus(ctx context.Context) (map[string]interface{}, er
 	yearsToNext := nextYear - currentYear
 
 	result := map[string]interface{}{
-		"currentYear":          currentYear,
-		"worldStartedAt":       worldStartedAt,
-		"nextTribulationYear":  nextYear,
-		"yearsToTribulation":   yearsToNext,
-		"nextTribulationElement": nextElement,
+		"currentYear":              currentYear,
+		"worldStartedAt":           worldStartedAt,
+		"epochCount":               epochCount,
+		"nextTribulationYear":      nextYear,
+		"yearsToTribulation":       yearsToNext,
+		"nextTribulationElement":   nextElement,
 		"nextTribulationElementCn": ElementChinese(nextElement),
 		"realSecondsPerYear":   GameYearDuration.Seconds(),
 		"realMinutesPerYear":   GameYearDuration.Minutes(),
@@ -287,8 +289,8 @@ func (e *Engine) resetServer(ctx context.Context) error {
 	// Reset player items (breakthrough pills etc.)
 	_, _ = e.db.Exec(ctx, `DELETE FROM player_items`)
 
-	// Reset world year
-	_, _ = e.db.Exec(ctx, `UPDATE world_state SET current_year=1, last_year_at=NOW() WHERE id=1`)
+	// Reset world year, increment epoch count
+	_, _ = e.db.Exec(ctx, `UPDATE world_state SET current_year=1, last_year_at=NOW(), world_started_at=NOW(), epoch_count=epoch_count+1 WHERE id=1`)
 
 	// Clear all cave occupations and reassign random caves to all players
 	_, _ = e.db.Exec(ctx, `DELETE FROM cave_occupations`)

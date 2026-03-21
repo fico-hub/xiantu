@@ -103,8 +103,10 @@ CREATE TABLE IF NOT EXISTS world_state (
     id              INT PRIMARY KEY DEFAULT 1,
     current_year    INT NOT NULL DEFAULT 1,
     world_started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    last_year_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    last_year_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    epoch_count     INT NOT NULL DEFAULT 1
 );
+ALTER TABLE world_state ADD COLUMN IF NOT EXISTS epoch_count INT NOT NULL DEFAULT 1;
 
 -- ========== 天劫事件 ==========
 CREATE TABLE IF NOT EXISTS tribulation_events (
